@@ -1,0 +1,219 @@
+* { margin:0; padding:0; box-sizing:border-box; user-select:none; }
+html,body { width:100%; height:100%; overflow:hidden; background:#000;
+  font-family:"PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif; }
+#game-container, #game-container canvas { position:fixed; inset:0; display:block; }
+.hidden { display:none !important; }
+:root {
+  --paper:#efe7d4; --paper-dim:#cfc5ac; --ink:#16151a; --amber:#e8b34a; --amber-dim:#b0813a;
+  --serif:"Songti SC","STSong",Georgia,"Times New Roman",serif;
+  --type:"Courier New",Courier,monospace;
+}
+
+/* ============ 加载页 ============ */
+#loading { position:fixed; inset:0; z-index:200; display:flex; align-items:center; justify-content:center;
+  background:linear-gradient(180deg,#0a0e18 0%,#101624 55%,#1a1a22 100%); }
+.load-inner { text-align:center; }
+.gaslamp { width:20px; height:110px; margin:0 auto 20px; position:relative; }
+.gaslamp i { position:absolute; left:8px; top:26px; bottom:0; width:4px; background:#20242e; border-radius:2px;
+  box-shadow:0 0 0 1px rgba(255,255,255,.05); }
+.gaslamp span { position:absolute; left:50%; top:0; transform:translateX(-50%);
+  width:26px; height:32px; background:linear-gradient(#3a3428,#181410);
+  clip-path:polygon(20% 0,80% 0,100% 85%,50% 100%,0 85%); }
+.gaslamp span::after { content:""; position:absolute; left:50%; top:52%; transform:translate(-50%,-50%);
+  width:10px; height:12px; border-radius:50%; background:#ffd98a;
+  box-shadow:0 0 18px 8px rgba(255,190,90,.55), 0 0 60px 26px rgba(255,170,60,.18);
+  animation:lampFlick 2.6s infinite; }
+@keyframes lampFlick { 0%,100%{opacity:1} 87%{opacity:1} 90%{opacity:.55} 93%{opacity:.9} 96%{opacity:.7} }
+#loading h1 { font-family:var(--serif); font-size:34px; color:var(--paper); letter-spacing:6px;
+  text-shadow:0 2px 8px rgba(0,0,0,.8); }
+#loading h1 span { display:block; font-size:15px; letter-spacing:12px; margin-top:8px; color:var(--amber); }
+.load-bar { width:320px; height:10px; margin:28px auto 12px; background:rgba(255,255,255,.07);
+  border-radius:2px; overflow:hidden; border:1px solid rgba(232,179,74,.35); }
+#load-fill { width:0%; height:100%;
+  background:linear-gradient(90deg,#8a6a30,var(--amber)); transition:width .25s; }
+#load-text { color:#9aa2b2; font-size:13px; letter-spacing:2px; font-family:var(--type); }
+
+/* ============ 标题 ============ */
+#title-screen { position:fixed; inset:0; z-index:150; display:flex; align-items:center; justify-content:center;
+  background:transparent; transition:opacity 1s; }
+.title-inner { text-align:center; padding:34px 64px 22px; border-radius:4px; max-width:860px;
+  background:rgba(10,12,20,.62); backdrop-filter:blur(4px);
+  border:1px solid rgba(232,179,74,.25); box-shadow:0 20px 80px rgba(0,0,0,.6); }
+.masthead { font-family:var(--type); color:var(--paper-dim); font-size:12px; letter-spacing:8px;
+  border-bottom:1px solid rgba(207,197,172,.3); padding-bottom:10px; margin-bottom:16px; }
+.game-title { font-family:var(--serif); font-size:64px; color:var(--paper); letter-spacing:10px; line-height:1.12;
+  text-shadow:0 0 34px rgba(232,179,74,.35), 0 4px 0 #201a10, 0 10px 26px #000; }
+.game-title em { display:block; font-style:normal; font-size:38px; color:var(--amber); letter-spacing:14px;
+  text-shadow:0 0 24px rgba(232,179,74,.4), 0 3px 0 #241a08; margin-top:6px; }
+.subtitle { color:#9fb2c8; font-size:15px; letter-spacing:9px; margin:14px 0 30px; font-family:var(--serif); }
+#btn-start, #btn-respawn, #btn-restart { font-size:22px; padding:13px 58px; color:var(--ink);
+  background:linear-gradient(#f2ead6,#cdbf9e); border:1px solid #8a7a52; border-radius:3px;
+  cursor:pointer; letter-spacing:8px; font-family:var(--serif); font-weight:700;
+  box-shadow:0 0 24px rgba(232,179,74,.25), inset 0 0 12px rgba(120,90,30,.15); }
+#btn-start:hover, #btn-respawn:hover, #btn-restart:hover { transform:scale(1.05); }
+.title-controls { margin-top:28px; color:#a8b2bd; font-size:12.5px; line-height:2; }
+.pd-note { margin-top:18px; padding-top:10px; border-top:1px dashed rgba(207,197,172,.25);
+  color:#6d7684; font-size:11px; letter-spacing:1px; }
+
+/* ============ 双人联机 ============ */
+.mp-row { margin-top:18px; display:flex; gap:10px; justify-content:center; align-items:center; }
+.mp-row button { font-size:15px; padding:10px 20px; color:var(--paper); letter-spacing:2px; cursor:pointer;
+  background:linear-gradient(#2e3648,#1a2030); border:1px solid var(--amber-dim); border-radius:3px;
+  font-family:var(--serif); box-shadow:0 0 14px rgba(232,179,74,.15); }
+.mp-row button:hover { transform:scale(1.04); }
+.mp-row button:disabled { opacity:.45; cursor:default; transform:none; }
+#mp-code { width:104px; font-size:20px; text-align:center; letter-spacing:6px; text-transform:uppercase;
+  padding:8px 6px; background:rgba(0,0,0,.5); color:var(--amber); border:1px solid var(--amber-dim);
+  border-radius:3px; outline:none; font-family:var(--type); }
+#mp-status { margin-top:14px; font-size:14px; color:var(--amber); letter-spacing:1px; }
+
+/* ============ HUD ============ */
+#status-panel { position:fixed; top:18px; left:20px; z-index:40; }
+#hearts { display:flex; gap:4px; flex-wrap:wrap; max-width:340px; }
+.heart { width:26px; height:26px; position:relative; filter:drop-shadow(0 2px 2px rgba(0,0,0,.6)); }
+.heart::before { content:"♥"; position:absolute; font-size:26px; line-height:26px; color:#33313a; }
+.heart .fill { position:absolute; overflow:hidden; height:100%; }
+.heart .fill::before { content:"♥"; font-size:26px; line-height:26px; color:#c8332e; text-shadow:0 0 6px rgba(220,80,50,.55); }
+#stamina-wrap { margin-top:8px; opacity:0; transition:opacity .3s; }
+#stamina-wrap.show { opacity:1; }
+#stamina-ring { transition:stroke .2s; }
+#coin-panel { margin-top:6px; display:inline-flex; align-items:center; gap:8px;
+  background:rgba(10,12,18,.55); padding:4px 14px 4px 8px; border-radius:3px; border:1px solid rgba(232,179,74,.3); }
+.coin-icon { width:18px; height:18px; line-height:18px; text-align:center; border-radius:50%;
+  background:radial-gradient(circle at 35% 35%, #ffe9a0, #c9962c 70%); color:#5c4008; font-size:12px; font-weight:900; }
+#coin-count { color:var(--amber); font-size:16px; font-weight:700; font-family:var(--type); }
+
+#right-panel { position:fixed; top:18px; right:20px; z-index:40; width:176px; }
+#minimap { border-radius:3px; border:1px solid rgba(232,179,74,.4);
+  box-shadow:0 4px 16px rgba(0,0,0,.6); display:block; }
+#quest-panel { margin-top:10px; background:rgba(10,12,18,.6); border-left:3px solid var(--amber);
+  padding:8px 10px; border-radius:2px; }
+.quest-title { color:var(--amber); font-size:12px; letter-spacing:2px; margin-bottom:4px; font-family:var(--serif); }
+#quest-text { color:var(--paper); font-size:13px; line-height:1.6; }
+#case-panel { margin-top:10px; background:rgba(10,12,18,.6); border-left:3px solid #7a7466;
+  padding:8px 10px; border-radius:2px; max-height:38vh; overflow:auto; }
+.case-title { color:var(--paper-dim); font-size:12px; letter-spacing:2px; margin-bottom:5px; font-family:var(--serif); }
+#case-count { color:var(--amber); font-family:var(--type); font-size:11px; }
+#case-list { font-family:var(--type); font-size:11px; line-height:1.75; color:#b8b0a0; }
+#case-list .ev-key { color:var(--amber); }
+#case-list .ev-opt { color:#8d8778; }
+#case-list .ev-x { color:#6a6458; text-decoration:line-through; }
+#case-deduction { margin-top:6px; padding-top:6px; border-top:1px dashed rgba(207,197,172,.25);
+  font-size:11.5px; line-height:1.7; color:#d8ccae; font-family:var(--type); }
+#case-deduction:empty { display:none; }
+
+#weapon-bar { position:fixed; right:20px; bottom:20px; z-index:40; display:flex; gap:10px; }
+.wslot { width:64px; height:64px; border-radius:3px; background:rgba(10,12,18,.6);
+  border:1px solid rgba(207,197,172,.3); position:relative; display:flex; flex-direction:column;
+  align-items:center; justify-content:center; color:#ccc; }
+.wslot.active { border-color:var(--amber); box-shadow:0 0 14px rgba(232,179,74,.45); background:rgba(46,36,12,.55); }
+.wslot .wicon { font-size:26px; }
+.wslot .wname { font-size:10px; margin-top:2px; }
+.wslot .wkey { position:absolute; top:2px; left:6px; font-size:10px; color:var(--amber); font-family:var(--type); }
+.wslot .dura { position:absolute; bottom:4px; left:8px; right:8px; height:4px; border-radius:2px;
+  background:rgba(255,255,255,.18); overflow:hidden; }
+.wslot .dura i { display:block; height:100%; background:#a8c46a; border-radius:2px; }
+.wslot .dura i.low { background:#d09a3a; } .wslot .dura i.crit { background:#c8332e; }
+.wslot.empty { opacity:.35; }
+.wslot.cd .wicon { filter:grayscale(1) brightness(.6); }
+
+#boss-bar { position:fixed; bottom:34px; left:50%; transform:translateX(-50%); z-index:45; width:min(680px,70vw); }
+.boss-name { text-align:center; color:#d8ccae; font-size:18px; letter-spacing:6px; font-family:var(--serif);
+  text-shadow:0 0 12px rgba(232,179,74,.6); margin-bottom:6px; }
+#boss-phase { color:var(--amber); font-size:13px; font-family:var(--type); }
+#boss-weak { color:#9fb2c8; font-size:12px; font-family:var(--type); margin-left:8px; }
+.boss-hp-outer { height:16px; border-radius:2px; border:1px solid rgba(232,179,74,.5);
+  background:rgba(6,8,14,.6); overflow:hidden; }
+#boss-hp-fill { width:100%; height:100%;
+  background:linear-gradient(90deg,#5a3a18,#e8b34a); transition:width .3s;
+  box-shadow:0 0 12px rgba(232,179,74,.6) inset; }
+
+#interact-prompt { position:fixed; bottom:24vh; left:50%; transform:translateX(-50%); z-index:44;
+  background:rgba(10,12,18,.72); color:var(--paper); padding:8px 22px; border-radius:3px; font-size:16px;
+  border:1px solid rgba(232,179,74,.4); }
+#interact-prompt b { display:inline-block; background:var(--amber); color:var(--ink); border-radius:3px;
+  padding:1px 9px; margin-right:8px; font-size:15px; font-family:var(--type); }
+
+/* ============ 麻醉镖枪准星 ============ */
+#crosshair { position:fixed; left:50%; top:50%; width:0; height:0; z-index:47; pointer-events:none; }
+#crosshair .ch-ring { position:absolute; left:50%; top:50%; transform:translate(-50%,-50%) scale(var(--ch,1.6));
+  width:44px; height:44px; border:2px solid var(--chc,rgba(240,235,220,.85)); border-radius:50%;
+  box-shadow:0 0 6px rgba(0,0,0,.5); transition:border-color .15s; }
+#crosshair .ch-dot { position:absolute; left:50%; top:50%; transform:translate(-50%,-50%);
+  width:4px; height:4px; border-radius:50%; background:var(--chc,rgba(240,235,220,.9)); }
+#crosshair .ch-tick { position:absolute; background:var(--chc,rgba(240,235,220,.85)); box-shadow:0 0 4px rgba(0,0,0,.5); }
+#crosshair .ch-tick.t, #crosshair .ch-tick.b { width:2px; height:10px; left:-1px; }
+#crosshair .ch-tick.l, #crosshair .ch-tick.r { height:2px; width:10px; top:-1px; }
+#crosshair .ch-tick.t { top:calc(-31px * var(--ch,1.6)); }
+#crosshair .ch-tick.b { top:calc(21px * var(--ch,1.6)); }
+#crosshair .ch-tick.l { left:calc(-31px * var(--ch,1.6)); }
+#crosshair .ch-tick.r { left:calc(21px * var(--ch,1.6)); }
+
+#center-toast { position:fixed; top:26vh; left:50%; transform:translateX(-50%); z-index:46;
+  color:var(--amber); font-size:24px; letter-spacing:5px; font-family:var(--serif);
+  text-shadow:0 0 18px rgba(232,179,74,.7),0 2px 4px #000;
+  animation:toastIn .5s; text-align:center; }
+@keyframes toastIn { from{opacity:0; transform:translateX(-50%) translateY(16px)} to{opacity:1} }
+
+#help-panel { position:fixed; left:20px; bottom:20px; z-index:40; background:rgba(10,12,18,.72);
+  border-radius:3px; padding:12px 18px; color:#c6c0b2; font-size:12px; line-height:1.9; max-width:360px;
+  border:1px solid rgba(207,197,172,.25); }
+#help-panel h3 { color:var(--amber); font-size:14px; margin-bottom:4px; letter-spacing:2px; font-family:var(--serif); }
+
+/* ============ 演绎视界滤镜 ============ */
+#deduce-overlay { position:fixed; inset:0; z-index:52; pointer-events:none; opacity:0; transition:opacity .35s;
+  background:
+    radial-gradient(ellipse at center, transparent 42%, rgba(8,10,18,.55) 100%),
+    linear-gradient(rgba(30,40,60,.12), rgba(30,40,60,.12));
+  backdrop-filter:saturate(.35) contrast(1.06) brightness(.92); }
+#deduce-overlay.on { opacity:1; }
+#deduce-overlay::after { content:"演 绎 视 界"; position:absolute; top:9vh; width:100%; text-align:center;
+  color:rgba(232,179,74,.75); font-size:13px; letter-spacing:14px; font-family:var(--serif); }
+
+/* ============ 对话 ============ */
+#dialog-box { position:fixed; bottom:8vh; left:50%; transform:translateX(-50%); z-index:70;
+  width:min(760px,80vw); background:rgba(14,14,18,.88); border:1px solid rgba(232,179,74,.45);
+  border-radius:4px; padding:18px 26px 22px; box-shadow:0 10px 40px rgba(0,0,0,.6); }
+.dialog-speaker { color:var(--amber); font-size:15px; letter-spacing:3px; margin-bottom:8px; font-family:var(--serif); }
+.dialog-text { color:var(--paper); font-size:17px; line-height:1.9; min-height:56px; }
+.dialog-next { position:absolute; right:18px; bottom:10px; color:#a8c46a; font-size:13px;
+  animation:blink 1s infinite; font-family:var(--type); }
+@keyframes blink { 0%,100%{opacity:1} 50%{opacity:.2} }
+
+/* ============ 过场 ============ */
+.cine-bar { position:fixed; left:0; width:100%; height:0; background:#000; z-index:60; transition:height .8s; }
+#cine-top { top:0; } #cine-bottom { bottom:0; }
+body.cinematic .cine-bar { height:11vh; }
+#boss-title { position:fixed; top:16vh; width:100%; text-align:center; z-index:61; opacity:0;
+  transition:opacity 1.2s; color:#e8ddc0; font-size:46px; letter-spacing:12px; font-family:var(--serif);
+  text-shadow:0 0 34px rgba(232,179,74,.8), 0 3px 0 #000; }
+#boss-title.show { opacity:1; }
+
+#damage-vignette { position:fixed; inset:0; z-index:55; pointer-events:none; opacity:0;
+  background:radial-gradient(ellipse at center, transparent 55%, rgba(180,20,10,.55) 100%); transition:opacity .15s; }
+#flash-white { position:fixed; inset:0; z-index:56; pointer-events:none; opacity:0; background:#fff; transition:opacity .4s; }
+
+/* ============ 死亡/结局 ============ */
+#death-screen { position:fixed; inset:0; z-index:120; display:flex; flex-direction:column;
+  align-items:center; justify-content:center; background:rgba(8,8,14,.88); }
+#death-screen h1 { color:#c8332e; font-size:52px; letter-spacing:14px; margin-bottom:14px; font-family:var(--serif);
+  text-shadow:0 0 30px rgba(200,50,40,.5); }
+#death-screen p { color:#9a948a; margin-bottom:36px; letter-spacing:4px; }
+
+#end-screen { position:fixed; inset:0; z-index:120; display:flex; align-items:center; justify-content:center;
+  background:radial-gradient(ellipse at 50% 40%, rgba(28,30,44,.94), rgba(4,5,10,.97)); }
+.end-inner { text-align:center; max-width:760px; }
+#end-screen h1 { color:var(--amber); font-size:40px; letter-spacing:8px; margin-bottom:18px; font-family:var(--serif);
+  text-shadow:0 0 30px rgba(232,179,74,.6); }
+#end-stats { color:#c8d4a8; font-size:15px; letter-spacing:1px; margin-bottom:26px; line-height:2; font-family:var(--type); }
+.credits { color:#a8a294; font-size:14px; line-height:2.2; margin-bottom:30px; }
+.credits .pd-small { color:#6d7684; font-size:11px; }
+.credits .thanks { color:var(--amber); font-size:19px; letter-spacing:6px; margin-top:10px; font-family:var(--serif); }
+
+/* 伤害数字（打字机字体） */
+.dmg-num { position:fixed; z-index:48; pointer-events:none; font-weight:900; font-size:20px;
+  font-family:var(--type);
+  color:#f2ead6; text-shadow:0 0 6px #b06a20, 0 2px 2px #000; transition:transform 1s ease-out, opacity 1s;
+  transform:translate(-50%,-50%); }
+.dmg-num.crit { color:var(--amber); font-size:28px; }
+.dmg-num.heal { color:#a8c46a; text-shadow:0 0 6px #4a4; }
