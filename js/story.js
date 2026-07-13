@@ -99,6 +99,21 @@ const Story = (() => {
           x += dx / l * 10; z += dz / l * 10;
         }
       }
+      // v2：避开建筑碰撞体（被楼房盖住则沿盒心径向挪出，最多 14 次）
+      const boxes = World.boxes || [];
+      for (let tries = 0; tries < 14; tries++) {
+        let hit = null;
+        for (const b of boxes) {
+          const c = Math.cos(-(b.ry || 0)), s = Math.sin(-(b.ry || 0));
+          const dx = x - b.x, dz = z - b.z;
+          const lx = dx * c - dz * s, lz = dx * s + dz * c;
+          if (Math.abs(lx) < b.hx + 1.2 && Math.abs(lz) < b.hz + 1.2) { hit = b; break; }
+        }
+        if (!hit) break;
+        let dx = x - hit.x, dz = z - hit.z, l = Math.hypot(dx, dz);
+        if (l < 0.01) { dx = 1; dz = 0; l = 1; }
+        x += dx / l * 2.5; z += dz / l * 2.5;
+      }
       const clue = {
         id: def.id, x, z, y: World.height(x, z), kind: def.kind,
         key: !!def.key, found: false, text: def.text || '', explain: def.explain || '', mesh: null,
@@ -221,7 +236,7 @@ const Story = (() => {
         Enemies.setWeakUnlocked(2, true);
       }
       if (window.Player) { Player.addStamina(45); Player.addHeartContainer(); }
-      if (window.Combat) Combat.giveWeapon('hammer');
+      if (window.Combat && Combat.upgradeCounter) { Combat.upgradeCounter(); if (window.UI && UI.toast) UI.toast('演绎反击 已强化（弱点首击 +20）'); }
       enterQuest('foundry');
     });
   }
@@ -451,7 +466,7 @@ const Story = (() => {
       refreshCase();
       if (E && E.setWeakUnlocked) { E.setWeakUnlocked(0, true); E.setWeakUnlocked(1, true); E.setWeakUnlocked(2, true); }
     }
-    if (C && !C.hasWeapon('hammer')) C.giveWeapon('hammer', true);
+    if (C && C.upgradeCounter) C.upgradeCounter();
     if (!flags.grantFoundry) {
       flags.grantFoundry = true;
       if (P) { P.addStamina(45); P.addHeartContainer(); }

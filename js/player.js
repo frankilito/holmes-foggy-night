@@ -217,13 +217,8 @@ const Player = (() => {
     }
     if (!guard()) return;
     if (e.button === 0) {
-      // 空中左键 = 手杖俯冲击；地面 = 普通攻击
-      if (!onGround && !swimming && !climbing && window.Combat && Combat.diveAttack) {
-        Combat.diveAttack();
-        vel.y = -34;                             // 俯冲竖速（Combat 设置亦可，幂等）
-      } else if (window.Combat && Combat.attack) {
-        Combat.attack();
-      }
+      // v2 削减动作元素：空中左键不再触发俯冲击，统一普通攻击
+      if (window.Combat && Combat.attack) Combat.attack();
     } else if (e.button === 2) {
       if (window.Combat && Combat.block) Combat.block(true);
     }

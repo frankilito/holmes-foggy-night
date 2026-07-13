@@ -1,6 +1,8 @@
-/* enemies.js — 莫里亚蒂犯罪网络：5 种敌人（程序化建模 + AI）+ BOSS「莱辛巴赫乌鸦」
+/* enemies.js — 莫里亚蒂犯罪网络：5 种敌人 + BOSS「莱辛巴赫乌鸦」
+ * v2：enforcer/assassin/bomber 换 KayKit 骨骼角色（SkeletonUtils.clone + 每 mob 一个 AnimationMixer，41 骨 76 动画）；
+ *     rat/hound 保留程序化建模（细节加倍 + 原有 bob 动画）；减员至 16 只（任务组 4 + 城市 8 + 厂区 4）；AI 温和化
  * mob 形状（契约）：{i, type, pos, ry, hp, maxHp, state, r, obj, alive, weakUntil:0, stagger:0}
- * 模型嵌套：obj(AI 朝向 ry) → inner(程序化动画 bob/呼吸/压扁) → fix(模型轴向修正)
+ * 模型嵌套：obj(AI 朝向 ry) → inner(程序化动画 bob/呼吸/压扁/颤抖) → fix(模型，KayKit 面朝 +Z 无需轴向修正)
  * 联机：主机权威 AI/伤害，客机只做快照插值与受击表现（见 contract.md §2 Enemies） */
 const Enemies = (() => {
   const LC = h => new THREE.Color(h).convertSRGBToLinear();
@@ -33,13 +35,20 @@ const Enemies = (() => {
   ];
 
   // 类型数值（伤害单位=半心）
+  // v2 温和化：仇恨半径 ×0.8（脱战更容易）、攻击冷却 ×1.6、chase 移速 ×0.9（见 chaseMove）、
+  // bomber 引信 0.9→1.4s、enforcer 前摇 0.6→0.9s、enforcer 伤害 3→2.5、bomber 自爆 5→4
   const CFG = {
-    rat:      { hp: 14,  r: 0.5, aggro: 16, atkR: 1.5, dmg: 1,   windup: 0.4,  cd: 0.9, spd: 5.6 },
-    bomber:   { hp: 25,  r: 0.7, aggro: 14, atkR: 1.9, dmg: 5,   windup: 0.9,  cd: 9,   spd: 3.5, suicide: true },
-    hound:    { hp: 35,  r: 0.8, aggro: 16, atkR: 2.2, dmg: 2,   windup: 0.5,  cd: 1.3, spd: 6.6, charge: true },
-    assassin: { hp: 20,  r: 0.5, aggro: 18, atkR: 1.9, dmg: 2.5, windup: 0.45, cd: 1.1, spd: 5.9, blink: true },
-    enforcer: { hp: 120, r: 0.9, aggro: 20, atkR: 2.8, dmg: 3,   windup: 0.6,  cd: 1.7, spd: 4.2 },
+    rat:      { hp: 14,  r: 0.5, aggro: 12.8, atkR: 1.5, dmg: 1,   windup: 0.4,  cd: 1.44, spd: 5.6 },
+    bomber:   { hp: 25,  r: 0.7, aggro: 11.2, atkR: 1.9, dmg: 4,   windup: 1.4,  cd: 14.4, spd: 3.5, suicide: true },
+    hound:    { hp: 35,  r: 0.8, aggro: 12.8, atkR: 2.2, dmg: 2,   windup: 0.5,  cd: 2.08, spd: 6.6, charge: true },
+    assassin: { hp: 20,  r: 0.5, aggro: 14.4, atkR: 1.9, dmg: 2.5, windup: 0.45, cd: 1.76, spd: 5.9, blink: true },
+    enforcer: { hp: 120, r: 0.9, aggro: 16,   atkR: 2.8, dmg: 2.5, windup: 0.9,  cd: 2.72, spd: 4.2 },
   };
+
+  // v2：三种人形敌人换 KayKit 骨骼角色（G.models 已加载，{scene, animations:76 clips}，面朝 +Z）
+  const KK_MODEL = { enforcer: 'kk_Barbarian', assassin: 'kk_Rogue_Hooded', bomber: 'kk_Mage' };
+  const KK_ATK = { enforcer: '2H_Melee_Attack_Chop', assassin: '1H_Melee_Attack_Stab', bomber: 'Throw' };
+  const KK_HIT = 'Hit_A', KK_DEATH = 'Death_A';
 
   /* ================= 小工具 ================= */
   const _v = new THREE.Vector3();
@@ -70,7 +79,7 @@ const Enemies = (() => {
     return { obj, inner, fix };
   }
 
-  // 发条侦察鼠：黄铜小盒 + 发条钥匙 + 弹簧腿
+  // 发条侦察鼠：黄铜小盒 + 发条钥匙 + 弹簧腿 + 侧齿轮 + 天线 + 铆钉 + 尾簧（v2 细节加倍）
   function buildRat(m) {
     const f = m.fix;
     const brass = mobMat(m, 0x9a7a34), brassD = mobMat(m, 0x6e5620), iron = mobMat(m, 0x3a3f48);
@@ -78,11 +87,29 @@ const Enemies = (() => {
     body.position.y = 0.44; body.castShadow = true; f.add(body);
     const cap = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.17, 0.1, 8), brassD);
     cap.position.y = 0.65; f.add(cap);
+    // 背甲铆钉（两排）
+    const rivetGeo = new THREE.SphereGeometry(0.025, 5, 4);
+    for (const [rx, rz] of [[-0.15, 0.18], [0.15, 0.18], [-0.15, -0.12], [0.15, -0.12]]) {
+      const rivet = new THREE.Mesh(rivetGeo, brassD);
+      rivet.position.set(rx, 0.605, rz); f.add(rivet);
+    }
     const head = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.24, 0.26), brass);
     head.position.set(0, 0.5, 0.42); f.add(head);
     const eyeMat = mobMat(m, 0x140d04, { emissive: new THREE.Color(0xffb347) });
     const eye = new THREE.Mesh(new THREE.SphereGeometry(0.045, 6, 6), eyeMat);
     eye.position.set(0, 0.53, 0.56); f.add(eye);
+    // 触须（头部两侧细铜丝）
+    for (const sx of [-0.1, 0.1]) {
+      const whisker = new THREE.Mesh(new THREE.CylinderGeometry(0.006, 0.006, 0.22, 4), brassD);
+      whisker.rotation.z = sx > 0 ? -1.1 : 1.1; whisker.rotation.x = 0.5;
+      whisker.position.set(sx + (sx > 0 ? 0.08 : -0.08), 0.48, 0.54); f.add(whisker);
+    }
+    // 天线 + 发光珠（头顶）
+    const antenna = new THREE.Mesh(new THREE.CylinderGeometry(0.008, 0.008, 0.26, 4), iron);
+    antenna.position.set(0.08, 0.74, 0.4); antenna.rotation.z = -0.25; f.add(antenna);
+    const beadMat = mobMat(m, 0x2a1a06, { emissive: new THREE.Color(0xffd060) });
+    const bead = new THREE.Mesh(new THREE.SphereGeometry(0.025, 6, 6), beadMat);
+    bead.position.set(0.115, 0.87, 0.4); f.add(bead);
     // 发条钥匙（背部，转动）
     const key = new THREE.Group();
     const stem = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.025, 0.16, 6), iron);
@@ -91,6 +118,27 @@ const Enemies = (() => {
     wing.position.z = -0.14;
     key.add(stem, wing); key.position.set(0, 0.5, -0.34);
     f.add(key); m.parts.key = key;
+    // 尾簧（三段环）
+    for (let k = 0; k < 3; k++) {
+      const coil = new THREE.Mesh(new THREE.TorusGeometry(0.05, 0.012, 5, 8), iron);
+      coil.position.set(0, 0.42, -0.38 - k * 0.035); f.add(coil);
+    }
+    // 侧齿轮（走动时转动）
+    m.parts.gears = [];
+    for (const sx of [-0.25, 0.25]) {
+      const gear = new THREE.Group();
+      const disk = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.1, 0.03, 8), brassD);
+      disk.rotation.z = Math.PI / 2;
+      gear.add(disk);
+      for (let k = 0; k < 8; k++) {
+        const tooth = new THREE.Mesh(new THREE.BoxGeometry(0.025, 0.035, 0.025), brassD);
+        const a = k / 8 * TAU;
+        tooth.position.set(0, Math.cos(a) * 0.11, Math.sin(a) * 0.11);
+        gear.add(tooth);
+      }
+      gear.position.set(sx, 0.4, 0.02);
+      f.add(gear); m.parts.gears.push(gear);
+    }
     // 弹簧腿（髋关节为支点摆动）
     m.parts.legs = [];
     for (const [sx, sz] of [[-0.16, 0.22], [0.16, 0.22], [-0.16, -0.22], [0.16, -0.22]]) {
@@ -150,7 +198,7 @@ const Enemies = (() => {
     m.parts.barrelMat = barrelMat;
   }
 
-  // 装甲猎犬：四足铁皮 + 黄铜肩甲
+  // 装甲猎犬：四足铁皮 + 黄铜肩甲 + 排气管 + 项圈尖刺 + 铆钉 + 利爪（v2 细节加倍）
   function buildHound(m) {
     const f = m.fix;
     const iron = mobMat(m, 0x3a3f48), ironD = mobMat(m, 0x2a2e36), brass = mobMat(m, 0x8a6a2c);
@@ -162,14 +210,43 @@ const Enemies = (() => {
     head.position.set(0, 0.6, 0.78); f.add(head);
     const jaw = new THREE.Mesh(new THREE.BoxGeometry(0.26, 0.1, 0.34), ironD);
     jaw.position.set(0, 0.44, 0.8); f.add(jaw);
+    // 额甲（黄铜护额）
+    const brow = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.06, 0.16), brass);
+    brow.position.set(0, 0.75, 0.8); f.add(brow);
     const eyeMat = mobMat(m, 0x1a0805, { emissive: new THREE.Color(0xff4411) });
     for (const sx of [-0.09, 0.09]) {
       const eye = new THREE.Mesh(new THREE.SphereGeometry(0.03, 6, 6), eyeMat);
       eye.position.set(sx, 0.64, 0.98); f.add(eye);
     }
-    for (const sx of [-0.3, 0.3]) { // 黄铜肩甲
+    // 项圈尖刺（颈后三枚黄铜锥）
+    for (let k = -1; k <= 1; k++) {
+      const spike = new THREE.Mesh(new THREE.ConeGeometry(0.035, 0.14, 5), brass);
+      spike.rotation.x = -0.5; spike.position.set(k * 0.12, 0.76, 0.52); f.add(spike);
+    }
+    for (const sx of [-0.3, 0.3]) { // 黄铜肩甲（带铆钉）
       const pauldron = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.14, 0.42), brass);
       pauldron.position.set(sx, 0.74, 0.3); f.add(pauldron);
+      for (const pz of [0.16, -0.02]) {
+        const rivet = new THREE.Mesh(new THREE.SphereGeometry(0.022, 5, 4), ironD);
+        rivet.position.set(sx + (sx > 0 ? 0.09 : -0.09), 0.74, 0.3 + pz); f.add(rivet);
+      }
+    }
+    // 体侧铆钉 + 散热口
+    const rivetGeo = new THREE.SphereGeometry(0.025, 5, 4);
+    for (const sx of [-0.27, 0.27]) {
+      for (const rz of [-0.3, 0, 0.3]) {
+        const rivet = new THREE.Mesh(rivetGeo, brass);
+        rivet.position.set(sx, 0.56, rz); f.add(rivet);
+      }
+      const vent = new THREE.Mesh(new THREE.BoxGeometry(0.02, 0.16, 0.22), ironD);
+      vent.position.set(sx, 0.42, -0.15); f.add(vent);
+    }
+    // 双排气管（背部，黄铜管口）
+    for (const sx of [-0.12, 0.12]) {
+      const pipe = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.04, 0.34, 7), iron);
+      pipe.rotation.x = -0.6; pipe.position.set(sx, 0.78, -0.4); f.add(pipe);
+      const rim = new THREE.Mesh(new THREE.TorusGeometry(0.05, 0.012, 5, 8), brass);
+      rim.position.set(sx, 0.88, -0.54); rim.rotation.x = -0.6; f.add(rim);
     }
     const tail = new THREE.Mesh(new THREE.ConeGeometry(0.05, 0.34, 5), ironD);
     tail.rotation.x = -1.1; tail.position.set(0, 0.6, -0.6); f.add(tail);
@@ -178,12 +255,19 @@ const Enemies = (() => {
       const leg = new THREE.Group();
       const lm = new THREE.Mesh(new THREE.CylinderGeometry(0.055, 0.045, 0.42, 6), iron);
       lm.position.y = -0.21;
-      leg.add(lm); leg.position.set(sx, 0.42, sz);
+      leg.add(lm);
+      // 利爪（足尖两枚）
+      for (const cx of [-0.035, 0.035]) {
+        const claw = new THREE.Mesh(new THREE.ConeGeometry(0.02, 0.1, 4), brass);
+        claw.rotation.x = Math.PI / 2; claw.position.set(cx, -0.4, 0.06);
+        leg.add(claw);
+      }
+      leg.position.set(sx, 0.42, sz);
       f.add(leg); m.parts.legs.push(leg);
     }
   }
 
-  // 迷雾刺客：瘦高灰衣 + 半透明 + 烟幕粒子
+  // 迷雾刺客：瘦高灰衣 + 半透明 + 烟幕粒子（v2 起仅作 KayKit 缺失兜底）
   function buildAssassin(m) {
     const f = m.fix;
     const bodyMat = mobMat(m, 0x52555e, { transparent: true, opacity: 0.5 });
@@ -201,7 +285,11 @@ const Enemies = (() => {
     const dag = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.03, 0.3), mobMat(m, 0x9aa0aa));
     dag.position.set(0.22, 0.95, 0.16); dag.rotation.x = 0.6; f.add(dag);
     m.parts.bodyMat = bodyMat;
-    // 环绕烟幕
+    addAssassinSmoke(m);
+  }
+
+  // 环绕烟幕（KayKit 刺客与兜底共用）
+  function addAssassinSmoke(m) {
     const N = 14;
     const g = new THREE.BufferGeometry();
     const p = new Float32Array(N * 3);
@@ -216,37 +304,50 @@ const Enemies = (() => {
       color: 0x6a6e78, size: 0.5, transparent: true, opacity: 0.35, depthWrite: false,
     }));
     smoke.frustumCulled = false;
-    f.add(smoke); m.parts.smoke = smoke;
+    m.fix.add(smoke); m.parts.smoke = smoke;
   }
 
-  // 莫里亚蒂重装打手：ModelKit.buildEnforcer + mixer（attack/hit/death clips）
-  function buildEnforcerMob(m) {
-    const built = ModelKit.buildEnforcer();
-    m.fix.add(built.scene);
-    m.mixer = new THREE.AnimationMixer(built.scene);
+  /* ================= KayKit 骨骼角色（enforcer/assassin/bomber） ================= */
+  // 状态映射：idle→Idle patrol→Walking_A chase→Running_A attack→KK_ATK[type](once 结束回退)
+  //          受击→Hit_A(once) 死亡→Death_A(once+clamp 倒地后隐藏)；交叉淡入 0.12s
+  function buildKKMob(m) {
+    const src = models && models[KK_MODEL[m.type]];
+    if (!src || !src.scene || !THREE.SkeletonUtils || !THREE.SkeletonUtils.clone) {
+      console.warn('[Enemies] KayKit 模型缺失，回退程序化：', KK_MODEL[m.type]);
+      if (m.type === 'bomber') buildBomber(m);
+      else if (m.type === 'assassin') buildAssassin(m);
+      else buildDummyHumanoid(m);
+      return;
+    }
+    const kk = THREE.SkeletonUtils.clone(src.scene); // SkinnedMesh 必须用 SkeletonUtils 克隆
+    m.fix.add(kk);
+    m.mixer = new THREE.AnimationMixer(kk);
     m.clipMap = {};
-    for (const c of built.animations) m.clipMap[c.name] = c;
-    built.scene.traverse(o => {
+    for (const c of (src.animations || [])) m.clipMap[c.name] = c;
+    kk.traverse(o => {
       if (!o.isMesh || !o.material) return;
       o.castShadow = true;
-      o.material = o.material.clone(); // 独立材质：受击泛白互不影响
+      o.material = o.material.clone(); // 独立材质：受击泛白/引信红闪互不染
+      if (m.type === 'assassin') o.material.transparent = true; // 烟幕半透明（opacity 每帧驱动）
       o.material.userData.eBase = o.material.emissive ? o.material.emissive.clone() : new THREE.Color(0, 0, 0);
       m.mats.push(o.material);
     });
     m.mixer.addEventListener('finished', e => {
       if (e.action._keep) return;
-      e.action.fadeOut(0.2);
+      e.action.fadeOut(0.12);
       if (m.busyOnce === e.action) {
         m.busyOnce = null;
-        if (m.curAnimObj && m.state !== 'dead') { m.curAnimObj.reset(); m.curAnimObj.fadeIn(0.2); m.curAnimObj.play(); }
+        if (m.curAnimObj && m.state !== 'dead') { m.curAnimObj.reset(); m.curAnimObj.fadeIn(0.12); m.curAnimObj.play(); }
       }
     });
-    m.isEnforcer = true;
+    m.isKK = true;
     m.busyOnce = null;
-    enforcerPlay(m, 'idle');
+    if (m.type === 'assassin') { m.parts.bodyMats = m.mats.slice(); addAssassinSmoke(m); }
+    if (m.type === 'bomber') m.parts.fuseMats = m.mats.slice(); // Mage 无独立引信 mesh：整体材质 emissive 红闪
+    kkPlay(m, 'Idle');
   }
 
-  function enforcerPlay(m, name, once, keep) {
+  function kkPlay(m, name, once, keep) {
     if (!m.mixer || !m.clipMap[name]) return;
     const a = m.mixer.clipAction(m.clipMap[name]);
     if (once) {
@@ -257,9 +358,28 @@ const Enemies = (() => {
       return;
     }
     if (m.curAnim === name && !m.busyOnce) return;
-    a.reset(); a.setLoop(THREE.LoopRepeat); a.fadeIn(0.2); a.play();
-    if (m.curAnimObj && m.curAnimObj !== a) m.curAnimObj.fadeOut(0.2);
+    a.reset(); a.setLoop(THREE.LoopRepeat); a.fadeIn(0.12); a.play();
+    if (m.curAnimObj && m.curAnimObj !== a) m.curAnimObj.fadeOut(0.12);
     m.curAnim = name; m.curAnimObj = a;
+  }
+
+  // 资产缺失兜底（enforcer 专用）：极简人形，保证逻辑不崩
+  function buildDummyHumanoid(m) {
+    const f = m.fix;
+    const coat = mobMat(m, 0x4a3a2a);
+    const body = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.9, 0.35), coat);
+    body.position.y = 0.85; body.castShadow = true; f.add(body);
+    const head = new THREE.Mesh(new THREE.BoxGeometry(0.26, 0.26, 0.26), coat);
+    head.position.y = 1.45; f.add(head);
+  }
+
+  // mixer 性能：玩家 90m 内逐帧更新；远处 0.2s 节流派发（动作切换不受影响）
+  function updateMixer(m, dt) {
+    if (!m.mixer) return;
+    const pp = (window.Player && Player.pos) || null;
+    if (!pp || flatDist(m.pos.x, m.pos.z, pp.x, pp.z) <= 90) { m.mixer.update(dt); return; }
+    m.mixAcc = (m.mixAcc || 0) + dt;
+    if (m.mixAcc >= 0.2) { m.mixer.update(m.mixAcc); m.mixAcc = 0; }
   }
 
   /* ================= mob 创建 ================= */
@@ -283,10 +403,8 @@ const Enemies = (() => {
     const sh = makeShell();
     m.obj = sh.obj; m.inner = sh.inner; m.fix = sh.fix;
     if (type === 'rat') buildRat(m);
-    else if (type === 'bomber') buildBomber(m);
     else if (type === 'hound') buildHound(m);
-    else if (type === 'assassin') buildAssassin(m);
-    else buildEnforcerMob(m);
+    else buildKKMob(m); // enforcer/assassin/bomber → KayKit 骨骼角色（资产缺失自动回退程序化）
     m.obj.position.set(x, y, z);
     m.obj.rotation.y = m.ry;
     scene.add(m.obj);
@@ -325,18 +443,18 @@ const Enemies = (() => {
     for (const [t, dx, dz] of SHRINE_LAYOUT) {
       shrineGroup.push(createMob(t, S.x + dx, S.z + dz, { hostile: false, shrine: true }));
     }
-    // ② 城市 24 只：srand 固定种子采样
+    // ② 城市 8 只（v2 减员 24→8；i=4..11）：srand 固定种子采样
     let guard = 0, made = 0;
-    while (made < 24 && guard++ < 6000) {
+    while (made < 8 && guard++ < 6000) {
       const x = (World.srand() - 0.5) * 640;
       const z = (World.srand() - 0.5) * 640;
       if (!validCitySpot(x, z)) continue;
       createMob(pickType(World.hash2(Math.round(x * 3), Math.round(z * 3))), x, z, {});
       made++;
     }
-    // ③ 厂区 7 只（VOLCANO 环 100~150m，enforcer≥2）
+    // ③ 厂区 4 只（v2 减员 7→4；i=12..15；VOLCANO 环 100~150m，前 2 只 enforcer）
     guard = 0; made = 0;
-    while (made < 7 && guard++ < 4000) {
+    while (made < 4 && guard++ < 4000) {
       const a = World.srand() * TAU;
       const rr = 100 + World.srand() * 50;
       const x = World.POS.VOLCANO.x + Math.cos(a) * rr;
@@ -587,7 +705,7 @@ const Enemies = (() => {
   }
   function chaseMove(m, tgt, dt) {
     const cfg = m.cfg;
-    let spd = cfg.spd;
+    let spd = cfg.spd * 0.9; // v2 温和化：chase 移速 ×0.9
     if (cfg.charge) { // 猎犬冲锋
       m.chargeT -= dt;
       if (m.charging > 0) { m.charging -= dt; spd *= 2.3; }
@@ -649,7 +767,7 @@ const Enemies = (() => {
           if (tgt.dist <= cfg.atkR && m.cd <= 0) {
             m.state = 'attack'; m.atkT = cfg.windup;
             if (m.type === 'bomber') m.fusing = true;       // 引信点燃：红闪颤抖
-            if (m.isEnforcer) enforcerPlay(m, 'attack', true);
+            if (m.isKK) kkPlay(m, KK_ATK[m.type], true);    // 攻击 clip（once，结束自动回退）
             break;
           }
           chaseMove(m, tgt, dt);
@@ -658,7 +776,7 @@ const Enemies = (() => {
           m.atkT -= dt;
           if (tgt) faceToward(m, tgt.pos.x, tgt.pos.z, dt, 14);
           if (m.atkT <= 0) {
-            if (m.type === 'bomber') { // 自爆：AOE 4m 5 半心 + 燃烧地面
+            if (m.type === 'bomber') { // 自爆：AOE 4m 4 半心 + 燃烧地面（v2 由 5 降至 4）
               explodeBomber(m, true);
               killMob(m, { silent: true });
               return;
@@ -704,6 +822,7 @@ const Enemies = (() => {
       if (Net.sendMobDmg) Net.sendMobDmg(m.i, dmg);
       flashHit(m);
       showDmgNum(m, dmg, opts.crit);
+      if (m.isKK) kkPlay(m, KK_HIT, true);
       return dmg;
     }
     if (m.shrine && !m.hostile) activateShrineGroup(); // 打到休眠任务组→全体激活
@@ -711,7 +830,7 @@ const Enemies = (() => {
     flashHit(m);
     showDmgNum(m, dmg, opts.crit);
     sfx('hit');
-    if (m.isEnforcer) enforcerPlay(m, 'hit', true);
+    if (m.isKK) kkPlay(m, KK_HIT, true); // v2：受击反馈 = Hit_A + 泛白（flashHit 材质闪）
     if (m.hp <= 0) { killMob(m, { source: opts.source }); return dmg; }
     if (m.hostile && (m.state === 'idle' || m.state === 'patrol')) m.state = 'chase';
     return dmg;
@@ -724,7 +843,7 @@ const Enemies = (() => {
     for (const mat of m.mats) if (mat.emissive && mat.userData.eBase) mat.emissive.copy(mat.userData.eBase);
     if (m.type === 'bomber' && !m.detonated) explodeBomber(m, !isClient()); // 被击杀也殉爆
     kills++;
-    if (m.isEnforcer) enforcerPlay(m, 'death', true, true);
+    if (m.isKK) kkPlay(m, KK_DEATH, true, true); // Death_A（clampWhenFinished，倒地后由 animateMob 隐藏）
     // mobs 不能从数组移除（联机快照按索引 i 同步）→ 标记 dead + 隐藏 obj
     if (!opts.silent && !isClient()) dropLoot(m);
   }
@@ -736,7 +855,7 @@ const Enemies = (() => {
     spawnExplosion(x, m.pos.y + 0.6, z, 4, 0.55);
     sfx('explosion'); sfx('fire');
     addBurn(x, z, 3.2, 4, authority, false);
-    hurtPlayersInRadius(x, z, 4, 5, authority);
+    hurtPlayersInRadius(x, z, 4, 4, authority); // v2：自爆 5→4 半心
     if (window.Player && Player.shake && Player.pos && flatDist(Player.pos.x, Player.pos.z, x, z) < 14) Player.shake(0.5, 0.25);
   }
 
@@ -753,20 +872,21 @@ const Enemies = (() => {
 
   /* ================= 程序化动画（双端共用） ================= */
   function animateMob(m, dt) {
-    if (m.mixer) m.mixer.update(dt);
+    updateMixer(m, dt); // 玩家 90m 内逐帧更新，远处 0.2s 节流派发
     const moved = flatDist(m.pos.x, m.pos.z, m._px, m._pz);
     m.spd = moved / Math.max(dt, 0.001);
     m._px = m.pos.x; m._pz = m.pos.z;
     m.obj.position.set(m.pos.x, m.pos.y, m.pos.z);
     m.obj.rotation.y = m.ry;
-    if (m.state === 'dead') { // 死亡前倒 0.6s，1.2s 后隐藏（mobs 保留）
+    if (m.state === 'dead') { // 程序化模型前倒 0.6s；KayKit 播 Death_A；倒地后隐藏（mobs 保留）
       m.deadT += dt;
       const k = Math.min(1, m.deadT / 0.6);
-      if (!m.isEnforcer) {
+      if (!m.isKK) {
         m.inner.rotation.x = -1.45 * (1 - (1 - k) * (1 - k));
         m.inner.position.y = -0.25 * k;
       }
-      if (m.deadT > 1.2 && m.obj.visible) m.obj.visible = false;
+      const hideAfter = m.isKK ? 2.0 : 1.2; // KayKit 等 Death_A 倒地后再隐藏
+      if (m.deadT > hideAfter && m.obj.visible) m.obj.visible = false;
       return;
     }
     const moving = m.spd > 0.3 && (m.state === 'chase' || m.state === 'patrol');
@@ -786,8 +906,15 @@ const Enemies = (() => {
     if (m.fusing) { // 炸药客引信：红闪 + 颤抖（随引信燃烧加剧）
       const f = 1 - Math.max(0, m.atkT) / m.cfg.windup;
       shx = (Math.random() - 0.5) * 0.06 * f; shz = (Math.random() - 0.5) * 0.06 * f;
-      if (m.parts.fuseMat) m.parts.fuseMat.emissive.setRGB(Math.sin(T * (20 + f * 30)) > 0 ? 1 : 0.15, 0.05, 0.02);
-      if (m.parts.barrelMat) m.parts.barrelMat.emissive.setRGB(Math.sin(T * (16 + f * 26)) > 0 ? 0.9 * f : 0, 0, 0);
+      if (m.hitFlash <= 0) { // 受击泛白期间让位
+        if (m.parts.fuseMats) { // KayKit Mage：整体材质 emissive 红闪
+          const on = Math.sin(T * (20 + f * 30)) > 0;
+          for (const mat of m.parts.fuseMats) if (mat.emissive) mat.emissive.setRGB(on ? 0.25 + 0.75 * f : 0.05, 0.03, 0.01);
+        } else { // 程序化兜底：引信 + 药桶红闪
+          if (m.parts.fuseMat) m.parts.fuseMat.emissive.setRGB(Math.sin(T * (20 + f * 30)) > 0 ? 1 : 0.15, 0.05, 0.02);
+          if (m.parts.barrelMat) m.parts.barrelMat.emissive.setRGB(Math.sin(T * (16 + f * 26)) > 0 ? 0.9 * f : 0, 0, 0);
+        }
+      }
     }
     m.inner.position.set(shx, bobY, shz);
     m.inner.scale.set(sxz, sy, sxz);
@@ -796,14 +923,18 @@ const Enemies = (() => {
       for (let li = 0; li < m.parts.legs.length; li++) m.parts.legs[li].rotation.x = sw * (li % 2 ? 1 : -1);
     }
     if (m.parts.key) m.parts.key.rotation.z += dt * (moving ? 9 : 2.5);
+    if (m.parts.gears) for (const g of m.parts.gears) g.rotation.x += dt * (moving ? 6 : 1.5);
     if (m.parts.smoke) m.parts.smoke.rotation.y += dt * 1.6;
-    if (m.type === 'assassin' && m.parts.bodyMat) {
+    if (m.type === 'assassin') { // 烟幕半透明：整体 opacity 0.4±0.12（闪现时更淡）
       let op = 0.4 + Math.sin(T * 3 + m.i) * 0.12;
       if (m.blinkFade > 0) { m.blinkFade -= dt; op *= 0.3; }
-      m.parts.bodyMat.opacity = op;
+      if (m.parts.bodyMats) for (const mat of m.parts.bodyMats) mat.opacity = op;
+      else if (m.parts.bodyMat) m.parts.bodyMat.opacity = op;
     }
-    if (m.isEnforcer && m.state !== 'attack') {
-      enforcerPlay(m, m.spd > 4 ? 'run' : m.spd > 0.5 ? 'walk' : 'idle');
+    if (m.isKK && m.state !== 'attack') { // KayKit 状态映射（attack/dead 由事件触发，不在此覆盖）
+      kkPlay(m, m.state === 'chase' ? (m.spd > 0.5 ? 'Running_A' : 'Idle')
+                : m.state === 'patrol' ? (m.spd > 0.5 ? 'Walking_A' : 'Idle')
+                : 'Idle');
     }
   }
 
@@ -839,16 +970,17 @@ const Enemies = (() => {
         if (m.state !== 'dead') killMob(m, { silent: true });
         continue;
       }
-      if (a[4] < prevHp) { flashHit(m); showDmgNum(m, prevHp - a[4], false); }
+      if (a[4] < prevHp) { flashHit(m); showDmgNum(m, prevHp - a[4], false); if (m.isKK) kkPlay(m, KK_HIT, true); }
       m.hp = a[4];
       m.state = ns;
       if (ns !== prevState) {
         if (ns === 'attack') {
           m.atkT = m.cfg.windup;
           if (m.type === 'bomber') m.fusing = true;
-          if (m.isEnforcer) enforcerPlay(m, 'attack', true);
+          if (m.isKK) kkPlay(m, KK_ATK[m.type], true);
         } else if (prevState === 'attack') {
           m.fusing = false;
+          if (m.parts.fuseMats) for (const mat of m.parts.fuseMats) if (mat.emissive && mat.userData.eBase) mat.emissive.copy(mat.userData.eBase);
         }
       }
     }

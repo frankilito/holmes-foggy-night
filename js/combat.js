@@ -16,7 +16,7 @@ const Combat = (() => {
     flower: { name: '化学燃烧瓶', icon: '瓶', max: 8,  dmg: 34 },
     bow:    { name: '气压麻醉镖枪', icon: '镖', max: 8, dmg: 30 },
   };
-  const SLOTS = ['sword', 'hammer', 'flower', 'bow'];
+  const SLOTS = ['sword', 'bow'];   // v2 削减动作元素：仅手杖剑 + 麻醉镖枪
   const MELEE_RANGE = 2.6, MELEE_HALF = 55 * DEG;   // 近战扇形 2.6m / 110°
   const SPIN_R = 2.8;                                // 第 4 段旋转杖击 AOE
   const HAMMER_R = 3.4;                              // 破门锤重击 AOE
@@ -31,6 +31,8 @@ const Combat = (() => {
   const DIVE_R = 6, DIVE_DMG = 30;                   // 俯冲击 AOE
   const SHIELD_MAX = 25, BLOCK_REDUCE = 0.75, PERFECT_WIN = 0.18;
   const DEDUCE_TIME = 4, DEDUCE_CD = 8, DEDUCE_TS = 0.45, COUNTER_DMG = 14;
+  let counterBonus = 0;                  // 案件链奖励：演绎反击强化（+6）
+  function upgradeCounter() { counterBonus = 6; }
   const MAGNET_R = 6, MAGNET_BOOST_R = 14;
   const C_RAIN = LC(0xbfd0e0), C_UMB = LC(0x9fb6c8), C_WHITE = new THREE.Color(1, 1, 1), C_SLAM = LC(0xc8b89a);
 
@@ -682,7 +684,7 @@ const Combat = (() => {
     const mk = markMap['m' + mob.i];
     if (mk && mk.until > clockT && !mk.hit) {
       mk.hit = true;
-      d += COUNTER_DMG;
+      d += COUNTER_DMG + counterBonus;
       counterFx();
     }
     const actual = (window.Enemies && Enemies.hitMob) ? Enemies.hitMob(mob, d, fromPos, { crit, source }) : d;
@@ -698,7 +700,7 @@ const Combat = (() => {
     const mk = markMap.dragon;
     if (mk && mk.until > clockT && !mk.hit) {
       mk.hit = true;
-      d += COUNTER_DMG;
+      d += COUNTER_DMG + counterBonus;
       counterFx();
     }
     const r = Enemies.hitDragon(part, d, { crit, source });
@@ -757,30 +759,17 @@ const Combat = (() => {
     pushUI(true);
   }
   function doSword() {
-    comboStep = comboTimer > 0 ? (comboStep + 1) % 4 : 0;
-    comboTimer = 1.1;
-    atkCd = 0.38;
+    // v2：单段杖击，左右交替（取消四连段/旋转杖击/空气波）
+    comboStep = (comboStep + 1) % 2;
+    atkCd = 0.42;
     const o = _v1.copy(Player.pos);
     const ry = Player.facing;
     sfx('swing');
-    let hits = 0;
-    if (comboStep === 3) {
-      // 第 4 段：旋转杖击 360° 扩散雨环 AOE 2.8m
-      spawnSpin(o);
-      hits = meleeFan(SPIN_R, Math.PI, WDEF.sword.dmg, 'melee', false, o, ry);
-      sendVFX('spin', o.x, o.y, o.z, ry);
-    } else {
-      // 月牙风压左右交替
-      const side = comboStep % 2 === 0 ? 1 : -1;
-      spawnSlash(o, ry, side, false);
-      hits = meleeFan(MELEE_RANGE, MELEE_HALF, WDEF.sword.dmg, 'melee', false, o, ry);
-      sendVFX('slash', o.x, o.y, o.z, ry);
-    }
-    if (hits > 0) {
-      deductDura(activeIdx);
-      // 满专注挥杖：额外压缩空气波
-      if (deduceT > 0) { spawnWave(o, ry, false); sendVFX('wave', o.x, o.y, o.z, ry); }
-    }
+    const side = comboStep % 2 === 0 ? 1 : -1;
+    spawnSlash(o, ry, side, false);
+    const hits = meleeFan(MELEE_RANGE, MELEE_HALF, WDEF.sword.dmg, 'melee', false, o, ry);
+    sendVFX('slash', o.x, o.y, o.z, ry);
+    if (hits > 0) deductDura(activeIdx);
   }
   function doHammer() {
     atkCd = 0.55;
@@ -1540,7 +1529,7 @@ const Combat = (() => {
   const Combat = {
     init, update, spawnPickup,
     giveWeapon, hasWeapon, repairWeapon, giveShield, giveBoomerang,
-    attack, attackRelease, block, switchWeapon, deduce, canAct, diveAttack,
+    attack, attackRelease, block, switchWeapon, deduce, canAct, diveAttack, upgradeCounter,
     playerHit, replayVFX, spendCoins,
     get coins() { return coinsN; },
     get kills() { return (window.Enemies && Enemies.kills) | 0; },

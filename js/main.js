@@ -24,22 +24,60 @@ const G = { scene: null, camera: null, renderer: null, models: {}, timeScale: 1 
     });
   }
 
-  /* ---------- 模型规格化：统一尺寸 & 底部对齐 ---------- */
+  /* ---------- 模型规格化：统一尺寸 & 底部对齐 ----------
+   * 精确表 NORM（旧自然件）+ 前缀表 NORM_PRE（KayKit kk_* / Poly Haven ph2_*） */
   const NORM = {
     tree:     { target: 9,    mode: 'height' },
+    pine:     { target: 9,    mode: 'height' },
+    bush:     { target: 1.6,  mode: 'max' },
+    boulder:  { target: 2.6,  mode: 'max' },
+    rockmed:  { target: 1.8,  mode: 'max' },
+    log:      { target: 3,    mode: 'max' },
+    stump:    { target: 1.2,  mode: 'max' },
+    stag:     { target: 2.4,  mode: 'height' },
     bridge:   { target: 9,    mode: 'max' },
     fence:    { target: 2.4,  mode: 'max' },
-    lantern:  { target: 2.6,  mode: 'height' },
     campfire: { target: 1.6,  mode: 'max' },
     column:   { target: 4.5,  mode: 'height' },
     columnwide: { target: 3.5, mode: 'height' },
-    lilypad:  { target: 1.6,  mode: 'max' },
-    cloud1:   { target: 14,   mode: 'max' },
-    cloud2:   { target: 14,   mode: 'max' },
+    flowers:  { target: 1.2,  mode: 'max' },
     ph_island_tree_02: { target: 12, mode: 'height' }, // 伦敦悬铃木
   };
+  // [前缀, 目标尺寸, 模式] —— 照扫件是真实尺度，统一缩放到游戏米制
+  const NORM_PRE = [
+    ['kk_cb_building_', 16, 'max'], ['kk_cb_streetlight', 6, 'height'], ['kk_cb_watertower', 13, 'height'],
+    ['kk_cb_bench', 1.8, 'max'], ['kk_cb_box_', 0.9, 'max'], ['kk_cb_dumpster', 2, 'max'],
+    ['kk_cb_trash_', 0.8, 'max'], ['kk_cb_bush', 1.4, 'max'],
+    ['kk_f_bed_', 2.2, 'max'], ['kk_f_shelf_', 2.1, 'height'], ['kk_f_cabinet_', 1.8, 'height'],
+    ['kk_f_couch', 2.2, 'max'], ['kk_f_armchair', 1.1, 'max'], ['kk_f_chair_', 1, 'height'],
+    ['kk_f_lamp_standing', 1.8, 'height'], ['kk_f_lamp_table', 0.6, 'max'], ['kk_f_table_', 1.4, 'max'],
+    ['kk_f_rug_', 3, 'max'], ['kk_f_pictureframe_', 1.2, 'max'], ['kk_f_book_', 0.4, 'max'], ['kk_f_pillow_', 0.5, 'max'],
+    ['kk_r_kitchentable_', 2.4, 'max'], ['kk_r_chair_', 1, 'height'], ['kk_r_crate', 0.6, 'max'],
+    ['kk_r_jar_', 0.35, 'max'], ['kk_r_bowl', 0.25, 'max'],
+    ['kk_Barbarian', 1.9, 'height'], ['kk_Knight', 1.85, 'height'], ['kk_Mage', 1.8, 'height'],
+    ['kk_Rogue', 1.78, 'height'],
+    ['ph2_street_lamp_', 6, 'height'], ['ph2_overhead_crane', 14, 'height'], ['ph2_large_iron_gate', 2.6, 'height'],
+    ['ph2_vintage_grandfather_clock', 2.1, 'height'], ['ph2_wooden_bookshelf', 2.2, 'height'],
+    ['ph2_GothicCabinet', 2.2, 'height'], ['ph2_vintage_cabinet', 1.5, 'height'], ['ph2_gothic_statue', 2.6, 'height'],
+    ['ph2_modular_industrial_pipes', 3, 'max'], ['ph2_modular_metal_gutter', 2, 'max'],
+    ['ph2_hanging_industrial_lamp', 1, 'max'], ['ph2_industrial_wall_lamp', 0.8, 'max'],
+    ['ph2_painted_wooden_bench', 1.8, 'max'], ['ph2_outdoor_table_chair_set', 1.6, 'max'],
+    ['ph2_wooden_barrels', 1.2, 'height'], ['ph2_wine_barrel', 1.1, 'height'], ['ph2_barrel_03', 1, 'height'],
+    ['ph2_wooden_crate_', 0.7, 'max'], ['ph2_old_military_crate', 0.8, 'max'], ['ph2_wicker_basket_', 0.5, 'max'],
+    ['ph2_water_manhole_cover', 1.2, 'max'], ['ph2_vintage_oil_lamp', 0.5, 'max'], ['ph2_wooden_lantern', 0.6, 'max'],
+    ['ph2_mantel_clock', 0.4, 'max'], ['ph2_wall_clock', 0.4, 'max'], ['ph2_book_encyclopedia', 0.4, 'max'],
+    ['ph2_postcard_set', 0.3, 'max'], ['ph2_vintage_pocket_watch', 0.15, 'max'],
+    ['ph2_concrete_cat_statue', 0.6, 'max'], ['ph2_street_rat', 0.3, 'max'],
+  ];
+  function normCfg(name) {
+    if (NORM[name]) return NORM[name];
+    for (const [pre, target, mode] of NORM_PRE) {
+      if (name.startsWith(pre)) return { target, mode };
+    }
+    return null;
+  }
   function normalizeModel(name, gltf) {
-    const cfg = NORM[name];
+    const cfg = normCfg(name);
     if (!cfg) return;
     const sc = gltf.scene;
     sc.updateMatrixWorld(true);
@@ -63,7 +101,28 @@ const G = { scene: null, camera: null, renderer: null, models: {}, timeScale: 1 
     'ph_grass_medium_01', 'ph_grass_medium_02', 'ph_fern_02', 'ph_dandelion_01',
     'ph_flower_gazania', 'ph_flower_ursinia', 'ph_boulder_01', 'ph_rock_moss_set_01',
     'ph_coast_rocks_01', 'ph_namaqualand_boulder_02', 'ph_dead_tree_trunk', 'ph_dead_tree_trunk_02',
-    'ph_island_tree_02', 'ph_shrub_01', 'ph_shrub_sorrel_01'];
+    'ph_island_tree_02', 'ph_shrub_01', 'ph_shrub_sorrel_01',
+    // KayKit CC0（建筑/家具/市集/角色）+ Poly Haven CC0 扫描道具
+    'kk_Barbarian', 'kk_cb_bench', 'kk_cb_box_A', 'kk_cb_box_B', 'kk_cb_building_A',
+    'kk_cb_building_B', 'kk_cb_building_C', 'kk_cb_building_D', 'kk_cb_building_E', 'kk_cb_building_F',
+    'kk_cb_building_G', 'kk_cb_building_H', 'kk_cb_bush', 'kk_cb_dumpster', 'kk_cb_streetlight',
+    'kk_cb_trash_A', 'kk_cb_trash_B', 'kk_cb_watertower', 'kk_f_armchair', 'kk_f_bed_double_A',
+    'kk_f_book_set', 'kk_f_book_single', 'kk_f_cabinet_medium', 'kk_f_cabinet_small', 'kk_f_chair_A',
+    'kk_f_chair_stool', 'kk_f_couch', 'kk_f_lamp_standing', 'kk_f_lamp_table', 'kk_f_pictureframe_large_A',
+    'kk_f_pictureframe_medium', 'kk_f_pillow_A', 'kk_f_rug_oval_A', 'kk_f_rug_rectangle_A', 'kk_f_shelf_A_big',
+    'kk_f_shelf_B_large', 'kk_f_table_low', 'kk_f_table_medium', 'kk_f_table_small', 'kk_Knight',
+    'kk_Mage', 'kk_r_bowl_small', 'kk_r_bowl', 'kk_r_chair_A', 'kk_r_chair_B',
+    'kk_r_chair_stool', 'kk_r_crate_buns', 'kk_r_crate_carrots', 'kk_r_crate_cheese', 'kk_r_crate_ham',
+    'kk_r_crate_lettuce', 'kk_r_crate_onions', 'kk_r_crate_potatoes', 'kk_r_crate_steak', 'kk_r_crate_tomatoes',
+    'kk_r_crate', 'kk_r_jar_A_medium', 'kk_r_jar_B_medium', 'kk_r_jar_C_medium', 'kk_r_kitchentable_A',
+    'kk_r_kitchentable_B_large', 'kk_Rogue_Hooded', 'kk_Rogue', 'ph2_barrel_03', 'ph2_book_encyclopedia_set_01',
+    'ph2_concrete_cat_statue', 'ph2_gothic_statue', 'ph2_GothicCabinet_01', 'ph2_hanging_industrial_lamp', 'ph2_industrial_wall_lamp',
+    'ph2_large_iron_gate', 'ph2_mantel_clock_01', 'ph2_modular_industrial_pipes_01', 'ph2_modular_metal_gutter', 'ph2_old_military_crate',
+    'ph2_outdoor_table_chair_set_01', 'ph2_overhead_crane', 'ph2_painted_wooden_bench', 'ph2_postcard_set_01', 'ph2_street_lamp_01',
+    'ph2_street_lamp_02', 'ph2_street_rat', 'ph2_vintage_cabinet_01', 'ph2_vintage_grandfather_clock_01', 'ph2_vintage_oil_lamp',
+    'ph2_vintage_pocket_watch', 'ph2_wall_clock', 'ph2_water_manhole_cover', 'ph2_wicker_basket_01', 'ph2_wicker_basket_02',
+    'ph2_wine_barrel_01', 'ph2_wooden_barrels_01', 'ph2_wooden_bookshelf_worn', 'ph2_wooden_crate_01', 'ph2_wooden_crate_02',
+    'ph2_wooden_lantern_01'];
   function loadAll(onDone) {
     const manager = new THREE.LoadingManager();
     const fill = document.getElementById('load-fill');
@@ -126,6 +185,36 @@ const G = { scene: null, camera: null, renderer: null, models: {}, timeScale: 1 
       // 自制人物模型（与 GLB 同构：{scene, animations}）
       G.models.holmes = Characters.buildHolmes();
       G.models.watson = Characters.buildWatson();
+
+      // v2：KayKit 城市资产雨夜化——去饱和 45% + 压暗偏冷（彩色图集→煤烟蓝黑基调）
+      const RAIN_TINT = new THREE.Color(0.52, 0.56, 0.62);
+      const tintMat = (m, sat, dark) => {
+        if (!m || m.userData.rainTinted) return;
+        m.userData.rainTinted = true;
+        if (m.color) m.color.multiply(RAIN_TINT);
+        const prev = m.onBeforeCompile;
+        m.onBeforeCompile = (sh) => {
+          if (prev) prev(sh);
+          sh.fragmentShader = sh.fragmentShader.replace(
+            '#include <dithering_fragment>',
+            `float _l = dot(gl_FragColor.rgb, vec3(0.299, 0.587, 0.114));
+            gl_FragColor.rgb = mix(vec3(_l), gl_FragColor.rgb, ${sat.toFixed(2)});
+            gl_FragColor.rgb *= vec3(${(dark * 0.94).toFixed(2)}, ${dark.toFixed(2)}, ${(dark * 1.12).toFixed(2)});
+            #include <dithering_fragment>`
+          );
+        };
+      };
+      for (const name in G.models) {
+        const isCity = name.startsWith('kk_cb_') || name.startsWith('kk_r_') || name.startsWith('kk_f_');
+        const isChar = name.startsWith('kk_Barbarian') || name.startsWith('kk_Knight') ||
+          name.startsWith('kk_Mage') || name.startsWith('kk_Rogue');
+        if (!isCity && !isChar) continue;
+        G.models[name].scene.traverse(o => {
+          if (!o.isMesh) return;
+          const mats = Array.isArray(o.material) ? o.material : [o.material];
+          for (const m of mats) isCity ? tintMat(m, 0.55, 0.85) : tintMat(m, 0.4, 0.72);
+        });
+      }
 
       World.build(G.scene, G.models);
       Player.init(G.scene, G.camera, G.models, G.renderer.domElement);
@@ -191,7 +280,7 @@ const G = { scene: null, camera: null, renderer: null, models: {}, timeScale: 1 
       Player.setCheckpoint(p.x, p.z);
       if (face) Player.faceDir(face.x - p.x, face.z - p.z);
     }
-    if (at === 'boss' || at === 'volcano') { Combat.giveWeapon('hammer', true); Combat.giveWeapon('flower', true); Combat.giveWeapon('bow', true); }
+    if (at === 'boss' || at === 'volcano') { Combat.giveWeapon('bow', true); }
     Player.unlockGlide();
     Combat.giveShield(true);
     Combat.giveBoomerang(true); // 演绎视界（沿用内部名）

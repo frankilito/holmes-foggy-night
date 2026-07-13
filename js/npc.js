@@ -87,7 +87,7 @@ const Npc = (() => {
     ],
     tobyFirst: [
       '（托比把湿鼻子埋进证物袋，低低呜咽一声，尾巴摇得像雨刷。）',
-      '它闻出来了：这瓶燃烧剂的配方，和黑墙铸造厂的煤灰同源。收好——它替你记住了这里。',
+      '它闻出来了：这包绷带上的石炭酸气味，和黑墙铸造厂的煤灰同源。收好——它替你记住了这里。',
     ],
     tobyAgain: [
       '（托比朝一个方向刨了刨爪子，回头看你，耳朵竖得笔直。）',
@@ -274,7 +274,10 @@ const Npc = (() => {
       case 'toby':
         if (first) {
           best.sniffT = 2.0;                          // 嗅闻动画 2s（与对话并行，道具立即发放）
-          if (C) C.giveWeapon('flower');
+          if (C && C.spawnPickup && window.Player) {  // v2：急救绷带×3 取代燃烧瓶
+            for (let k = 0; k < 3; k++)
+              C.spawnPickup('bandage', new THREE.Vector3(Player.pos.x + (k - 1) * 0.6, Player.pos.y + 1.2, Player.pos.z - 0.8));
+          }
           if (PL) PL.setCheckpoint(p.x, p.z);
           lines = LINES.tobyFirst;
         } else {

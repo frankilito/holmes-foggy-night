@@ -1,7 +1,10 @@
-/* city.js — 伦敦中心城区
- * 街区立面（InstancedMesh 按类型合批）/ 精确碰撞（World.boxes）/ 可进入建筑 /
- * 地标（221B·考文特市场·歌剧院·苏格兰场·国会大厦+大本钟+脚手架·塔桥·车站雨棚）/
- * 煤气灯 / 四层繁华（市民·马车·暖窗·屋顶生机+泰晤士）/ 湿石板路
+/* city.js v2 — 伦敦中心城区（城市元素 ×10 升级版）
+ * kk_cb_building_A..H 高精度楼房合批（≈2000 栋）/ 城区间建筑带（连续城市肌理）/
+ * 精确碰撞（World.boxes ≥150）/ 可进入建筑（kk_f 家具内景）/
+ * 地标（221B 家具重装·考文特市场+市集摊位·歌剧院·苏格兰场·国会大厦+大本钟+脚手架·塔桥·车站雨棚）/
+ * ph2/kk 街道家具 ×10（路灯·桶·箱·垃圾·井盖·铁门·长椅·老鼠·篮子）/
+ * 码头吊机+管道 / 铸造厂外缘 / 广场雕塑 / 煤气灯（真实光源 ≤14）/
+ * 四层繁华（市民 300 六型·马车 40 三型·暖窗 ≥800·屋顶生机+泰晤士）/ 湿石板路
  * 生成一律用 World.srand() 固定种子；update 内纯本地视觉特效可用 Math.random */
 const City = (() => {
   'use strict';
@@ -11,8 +14,8 @@ const City = (() => {
   const POS = World.POS;
   const NPCPTS = [POS.CLUB, POS.SHRINE, POS.THEATRE, POS.FLOWER];
 
-  let scene, built = false;
-  const stats = { facades: 0, colliders: 0, citizens: 0, carriages: 0, windows: 0 };
+  let scene, models, built = false;
+  const stats = { facades: 0, colliders: 0, citizens: 0, carriages: 0, windows: 0, props: 0, lamps: 0 };
   const carriages = [];                 // [{x,z,ry}] 小地图用（稳定引用，每帧更新）
   let wigginsSpot = null;
 
@@ -50,7 +53,7 @@ const City = (() => {
       quad(q(1, -1, -1), q(1, -1, 1), q(1, 1, 1), q(1, 1, -1), col);
       quad(q(-1, -1, 1), q(-1, -1, -1), q(-1, 1, -1), q(-1, 1, 1), col);
       quad(q(-1, 1, -1), q(1, 1, -1), q(1, 1, 1), q(-1, 1, 1), col);
-      quad(q(-1, -1, 1), q(1, -1, 1), q(1, -1, -1), q(-1, -1, -1), col);
+      quad(q(-1, -1, 1), q(1, -1, -1), q(1, -1, -1), q(-1, -1, -1), col);
       quad(q(-1, -1, 1), q(-1, 1, 1), q(1, 1, 1), q(1, -1, 1), col);
       quad(q(1, -1, -1), q(1, 1, -1), q(-1, 1, -1), q(-1, -1, -1), col);
     }
@@ -118,67 +121,36 @@ const City = (() => {
   }
 
   /* ================= 共享材质 ================= */
-  let matStatic, matGlass, matBasic, matRoad, matFacade, matSkirt;
+  let matStatic, matGlass, matBasic, matRoad, matSkirt;
   function buildMaterials() {
     matStatic = new THREE.MeshPhongMaterial({ vertexColors: true, shininess: 24, specular: new THREE.Color(0x2a3344), side: THREE.DoubleSide });
     matGlass = new THREE.MeshPhongMaterial({ color: LC(0x8fa6b2), transparent: true, opacity: 0.22, shininess: 120, specular: new THREE.Color(0xbfd4e0), side: THREE.DoubleSide, depthWrite: false });
     matBasic = new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.DoubleSide });
     matRoad = new THREE.MeshPhongMaterial({ color: LC(0x0e1118), shininess: 95, specular: new THREE.Color(0x42546e) });
-    matFacade = new THREE.MeshPhongMaterial({ vertexColors: true, shininess: 18, specular: new THREE.Color(0x222838), side: THREE.DoubleSide });
     matSkirt = new THREE.MeshPhongMaterial({ color: LC(0x100f14), shininess: 60, specular: new THREE.Color(0x2e3a4c) });
   }
 
-  /* ================= 立面类型（墙身/屋顶分别 instanced） ================= */
-  const TYPES = {
-    townhouse: { wall: 0x6e3b2e, roof: 0x262230, hMin: 9, hMax: 13, wMin: 6, wMax: 9, d: 7, rh: 2.0 },   // 红砖排屋
-    bank:      { wall: 0x8c8578, roof: 0x34302c, hMin: 11, hMax: 14, wMin: 10, wMax: 14, d: 10, rh: 1.2 }, // 石材银行
-    pub:       { wall: 0x4a3426, roof: 0x2a2420, hMin: 8, hMax: 11, wMin: 7, wMax: 10, d: 8, rh: 2.2 },   // 酒馆木筋墙
-    theatre:   { wall: 0x9a8e7c, roof: 0x383230, hMin: 12, hMax: 15, wMin: 10, wMax: 13, d: 9, rh: 1.4 }, // 剧院拱窗
-    newspaper: { wall: 0x5c5550, roof: 0x2c2826, hMin: 10, hMax: 13, wMin: 8, wMax: 11, d: 8, rh: 1.6 },  // 报社招牌楼
-    pharmacy:  { wall: 0x6b5a48, roof: 0x2e2a26, hMin: 8, hMax: 11, wMin: 6, wMax: 9, d: 7, rh: 2.0 },    // 药房
-    warehouse: { wall: 0x4c4238, roof: 0x302c28, hMin: 9, hMax: 12, wMin: 10, wMax: 15, d: 12, rh: 1.8 }, // 仓库
+  /* ================= kk 建筑类型（8 型）+ 可进入建筑内墙配色 ================= */
+  const KK = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H'];
+  const KK_STYLE = { // 仅用于可进入建筑的程序化外壳与屋顶
+    A: { wall: 0x6e3b2e, roof: 0x262230, rh: 2.0 }, B: { wall: 0x8c8578, roof: 0x34302c, rh: 1.2 },
+    C: { wall: 0x4a3426, roof: 0x2a2420, rh: 2.2 }, D: { wall: 0x9a8e7c, roof: 0x383230, rh: 1.4 },
+    E: { wall: 0x5c5550, roof: 0x2c2826, rh: 1.6 }, F: { wall: 0x6b5a48, roof: 0x2e2a26, rh: 2.0 },
+    G: { wall: 0x4c4238, roof: 0x302c28, rh: 1.8 }, H: { wall: 0x5a4a3c, roof: 0x282420, rh: 1.9 },
   };
-  const TYPE_KEYS = Object.keys(TYPES);
-  // 每种类型的单位几何（底在 y=0，占地 ±0.5），顶点色烘焙
-  const unitGeos = {};
-  function buildUnitGeos() {
-    for (const k of TYPE_KEYS) {
-      const T = TYPES[k];
-      const b = new Builder();
-      const wall = LC(T.wall), roof = LC(T.roof);
-      b.box(1, 1, 1, 0, 0.5, 0, 0, wall);
-      const trim = LC(0x1c1814);
-      if (k === 'townhouse') { // 临街凸窗
-        b.box(0.5, 0.42, 0.18, 0, 0.56, 0.58, 0, LC(0x5a2f25));
-        b.box(1.03, 0.05, 0.03, 0, 0.97, 0.5, 0, trim);
-      } else if (k === 'pub') { // 木筋墙
-        b.box(1.02, 0.06, 0.03, 0, 0.35, 0.51, 0, trim);
-        b.box(1.02, 0.06, 0.03, 0, 0.68, 0.51, 0, trim);
-        b.box(0.05, 1, 0.03, -0.32, 0.5, 0.51, 0, trim);
-        b.box(0.05, 1, 0.03, 0.32, 0.5, 0.51, 0, trim);
-      } else if (k === 'bank') { // 基座 + 檐口
-        b.box(1.05, 0.22, 1.05, 0, 0.11, 0, 0, LC(0x77705f));
-        b.box(1.06, 0.07, 1.06, 0, 0.94, 0, 0, LC(0x77705f));
-      } else if (k === 'theatre') { // 拱窗带 + 檐口
-        b.box(1.02, 0.5, 0.02, 0, 0.42, 0.51, 0, LC(0x857a68));
-        b.box(1.05, 0.08, 0.05, 0, 0.9, 0.5, 0, LC(0x857a68));
-      } else if (k === 'newspaper') { // 招牌带
-        b.box(1.02, 0.16, 0.03, 0, 0.3, 0.51, 0, LC(0x2c2620));
-      } else if (k === 'pharmacy') { // 绿色店面包边
-        b.box(1.02, 0.34, 0.02, 0, 0.17, 0.51, 0, LC(0x2e4a36));
-      } else if (k === 'warehouse') { // 大库门
-        b.box(0.42, 0.5, 0.03, 0, 0.25, 0.51, 0, LC(0x241d16));
-      }
-      unitGeos[k] = { wall: b.geometry() };
-      const r = new Builder();
-      r.prism(1.1, 1, 1.1, 0, 0, 0, 0, roof);
-      unitGeos[k].roof = r.geometry();
+  const kkBBox = {}; // letter -> {w,d,h}（模型已规格化 max=16m，居中、min.y=0）
+  function measureKK() {
+    for (const L of KK) {
+      const src = models['kk_cb_building_' + L];
+      if (!src) { kkBBox[L] = { w: 10, d: 10, h: 14 }; continue; }
+      const box = new THREE.Box3().setFromObject(src.scene);
+      const sz = box.getSize(new THREE.Vector3());
+      kkBBox[L] = { w: Math.max(4, sz.x), d: Math.max(4, sz.z), h: Math.max(7, sz.y) };
     }
   }
 
   /* ================= 全局收集容器 ================= */
-  const F = [];                 // 全部立面模块
-  const perType = {};           // type -> [module]
+  const F = [];                 // 全部建筑模块（kk 楼房）
   const windowsList = [];       // {x,y,z,ry,sil}
   const signsB = new Builder(); // 店招/灯罩/灯泡等自发光部件（matBasic）
   const staticB = new Builder();// 静态实心（地标/灯杆/可进入建筑/杂物架）
@@ -186,7 +158,7 @@ const City = (() => {
   const roadB = new Builder();  // 湿石板路
   const linePts = [], lineCols = []; // LineSegments（案件墙红线/提琴弦）
   const boxList = [];           // 本模块 push 的碰撞盒（本地备份，用于样条校验）
-  let alleyCount = 0, routeCount = 0, plankCount = 0;
+  let alleyCount = 0, routeCount = 0, plankCount = 0, signCount = 0, enterableCount = 0;
 
   // 导航避让：保留圆（地标）+ SPAWN 12m + NPC 点 6m + TOWER 33m
   const RESERVED = [
@@ -200,8 +172,8 @@ const City = (() => {
   ];
   function clearSpot(x, z, pad = 0) {
     const h = World.height(x, z);
-    if (h < 2.2 || h > 30) return false;
-    if (World.normal(x, z).y < 0.72) return false;
+    if (h < 1.5 || h > 34) return false;   // 河岸阶地可建（码头区吊脚楼观感）
+    if (World.normal(x, z).y < 0.62) return false;
     for (const r of RESERVED) if (Math.hypot(x - r.x, z - r.z) < r.r + pad) return false;
     if (Math.hypot(x - POS.SPAWN.x, z - POS.SPAWN.z) < 12 + pad) return false;
     for (const p of NPCPTS) if (Math.hypot(x - p.x, z - p.z) < 6 + pad) return false;
@@ -217,12 +189,44 @@ const City = (() => {
     return false;
   }
 
-  /* ================= 街区生成：道路网格 + 连续立面 ================= */
+  /* ================= 占用栅格（只拦跨区深度互插；阈值 0.3 允许密排交叠，同区排屋交叠保留） ================= */
+  const occ = new Map();
+  function occKey(x, z) { return (((Math.round(x / 8) * 73856093) ^ (Math.round(z / 8) * 19349663)) >>> 0); }
+  function occHit(x, z, w, di) {
+    for (let i = -1; i <= 1; i++) for (let j = -1; j <= 1; j++) {
+      const arr = occ.get(occKey(x + i * 8, z + j * 8));
+      if (!arr) continue;
+      const lim = (w + 8) * 0.3 + 0.3;
+      for (const o of arr) {
+        if (o.di === di) continue;
+        if (Math.abs(o.x - x) < (o.w + w) * 0.3 + 0.3 && Math.abs(o.z - z) < lim + o.w * 0.3) return true;
+      }
+    }
+    return false;
+  }
+  function occAdd(x, z, w, di) {
+    const k = occKey(x, z);
+    let arr = occ.get(k);
+    if (!arr) { arr = []; occ.set(k, arr); }
+    arr.push({ x, z, w, di });
+  }
+
+  /* ================= 街区生成：道路网格 + 连续排楼 ================= */
   const roadEdges = [];   // {a,b,len,dx,dz,y0,y1,valid,width}
   const roadNodes = [];   // {x,z,y}
   const nodeAdj = [];     // nodeIdx -> [edgeIdx]
   const lampSpots = [];   // {x,z,y, nx,nz}
+  const alleySpots = [];  // {x,z,y,ry,len} 后巷（<4m）中点，井盖/铁门/老鼠用
   const carriageLoops = [];
+  const LAMP_MODELS = ['ph2_street_lamp_01', 'ph2_street_lamp_02', 'kk_cb_streetlight'];
+  const LAMP_CAP = 280;
+
+  function lampClear(x, z) {
+    for (let i = lampSpots.length - 1; i >= Math.max(0, lampSpots.length - 60); i--) {
+      if (Math.hypot(lampSpots[i].x - x, lampSpots[i].z - z) < 10) return false;
+    }
+    return true;
+  }
 
   function genAxis(half, di) {
     const roads = [], blocks = [];
@@ -235,12 +239,63 @@ const City = (() => {
       const rc = p + w / 2;
       if (rc < half - 3) roads.push({ pos: rc, w, main });
       p += w;
-      const bd = 17 + S() * 6;
+      const bd = 20 + S() * 10;
       if (p < half - 8) blocks.push({ a: p, b: Math.min(half - 4, p + bd) });
       p += bd;
       gi++;
     }
     return { roads, blocks };
+  }
+
+  // 道路边（两节点间）：校验 + 湿石板路面 + 煤气灯 + 后巷记录
+  function addRoadEdge(n1, n2, width) {
+    const a = roadNodes[n1], b = roadNodes[n2];
+    const len = Math.hypot(b.x - a.x, b.z - a.z);
+    if (len < 2) return;
+    const e = {
+      a: n1, b: n2, len, dx: (b.x - a.x) / len, dz: (b.z - a.z) / len,
+      y0: a.y, y1: b.y, valid: true, width,
+    };
+    const steps = Math.ceil(len / 3);
+    for (let i = 0; i <= steps && e.valid; i++) {
+      const t = i / steps;
+      const x = a.x + (b.x - a.x) * t, z = a.z + (b.z - a.z) * t;
+      if (World.height(x, z) < 2.2) { e.valid = false; break; }
+      for (const r of RESERVED) if (Math.hypot(x - r.x, z - r.z) < r.r + 1.5) { e.valid = false; break; }
+      if (hitsAnyBox(x, z, 0.8)) e.valid = false;
+    }
+    const idx = roadEdges.length;
+    roadEdges.push(e);
+    nodeAdj[n1].push(idx); nodeAdj[n2].push(idx);
+    if (!e.valid) return;
+    // 湿石板路面（薄盒贴街网，顶面取沿线地形最高点，防地形起伏顶穿）
+    const ry = Math.atan2(e.dx, e.dz);
+    let mh = Math.max(a.y, b.y);
+    for (let s = 1; s < 4; s++) {
+      const t = s / 4;
+      mh = Math.max(mh, World.height(a.x + (b.x - a.x) * t, a.z + (b.z - a.z) * t));
+    }
+    roadB.box(width + 2.4, 0.8, len + 1.2, (a.x + b.x) / 2, mh - 0.18, (a.z + b.z) / 2, ry, LC(0x141820));
+    // 煤气灯：主街每 22~28m 一盏，交替两侧
+    const step = 22 + S() * 6;
+    const n = Math.floor(len / step);
+    for (let k = 0; k < n && lampSpots.length < LAMP_CAP; k++) {
+      const t = (k + 0.5) / n;
+      const side = (idx + k) % 2 ? 1 : -1;
+      const off = width / 2 + 1.3;
+      const x = a.x + (b.x - a.x) * t - e.dz * off * side;
+      const z = a.z + (b.z - a.z) * t + e.dx * off * side;
+      if (clearSpot(x, z) && !hitsAnyBox(x, z, 0.6) && lampClear(x, z)) {
+        lampSpots.push({ x, z, y: World.height(x, z), nx: -e.dz * side, nz: e.dx * side });
+      }
+    }
+    // 后巷记录（井盖/铁门/老鼠）
+    if (width < 4) {
+      alleySpots.push({
+        x: (a.x + b.x) / 2, z: (a.z + b.z) / 2,
+        y: Math.max(a.y, b.y), ry, len,
+      });
+    }
   }
 
   function genDistrict(cfg, di) {
@@ -259,52 +314,11 @@ const City = (() => {
       roadNodes.push({ x, z, y: World.height(x, z) });
       nodeAdj.push([]);
     }));
-    // 边（沿道路中心线）
-    function addEdge(n1, n2, width) {
-      const a = roadNodes[n1], b = roadNodes[n2];
-      const len = Math.hypot(b.x - a.x, b.z - a.z);
-      if (len < 2) return;
-      const e = {
-        a: n1, b: n2, len, dx: (b.x - a.x) / len, dz: (b.z - a.z) / len,
-        y0: a.y, y1: b.y, valid: true, width,
-      };
-      // 校验：不穿越碰撞盒 / 不落水 / 不进保留区
-      const steps = Math.ceil(len / 3);
-      for (let i = 0; i <= steps && e.valid; i++) {
-        const t = i / steps;
-        const x = a.x + (b.x - a.x) * t, z = a.z + (b.z - a.z) * t;
-        if (World.height(x, z) < 2.2) { e.valid = false; break; }
-        for (const r of RESERVED) if (Math.hypot(x - r.x, z - r.z) < r.r + 1.5) { e.valid = false; break; }
-        if (hitsAnyBox(x, z, 0.8)) e.valid = false;
-      }
-      const idx = roadEdges.length;
-      roadEdges.push(e);
-      nodeAdj[n1].push(idx); nodeAdj[n2].push(idx);
-      // 湿石板路面（薄盒贴街网，顶面取沿线地形最高点，防地形起伏顶穿）
-      const ry = Math.atan2(e.dx, e.dz);
-      let mh = Math.max(a.y, b.y);
-      for (let s = 1; s < 4; s++) {
-        const t = s / 4;
-        mh = Math.max(mh, World.height(a.x + (b.x - a.x) * t, a.z + (b.z - a.z) * t));
-      }
-      roadB.box(width + 2.4, 0.8, len + 1.2, (a.x + b.x) / 2, mh - 0.18, (a.z + b.z) / 2, ry, LC(0x141820));
-      // 煤气灯：沿街每 30~40m 一盏（按边长概率布设），交替两侧
-      if (lampSpots.length < 96 && S() < len / 34) {
-        const t = 0.25 + S() * 0.5;
-        const side = idx % 2 ? 1 : -1;
-        const off = width / 2 + 1.3;
-        const x = a.x + (b.x - a.x) * t - e.dz * off * side;
-        const z = a.z + (b.z - a.z) * t + e.dx * off * side;
-        if (clearSpot(x, z) && !hitsAnyBox(x, z, 0.6)) {
-          lampSpots.push({ x, z, y: World.height(x, z), nx: -e.dz * side, nz: e.dx * side });
-        }
-      }
-    }
     A.roads.forEach((ru, iu) => B.roads.forEach((rv, iv) => {
-      if (iv + 1 < B.roads.length) addEdge(nodeId[iu + '_' + iv], nodeId[iu + '_' + (iv + 1)], ru.w); // 沿 u 路，用 u 路宽
+      if (iv + 1 < B.roads.length) addRoadEdge(nodeId[iu + '_' + iv], nodeId[iu + '_' + (iv + 1)], ru.w); // 沿 u 路，用 u 路宽
     }));
     B.roads.forEach((rv, iv) => A.roads.forEach((ru, iu) => {
-      if (iu + 1 < A.roads.length) addEdge(nodeId[iu + '_' + iv], nodeId[(iu + 1) + '_' + iv], rv.w); // 沿 v 路，用 v 路宽
+      if (iu + 1 < A.roads.length) addRoadEdge(nodeId[iu + '_' + iv], nodeId[(iu + 1) + '_' + iv], rv.w); // 沿 v 路，用 v 路宽
     }));
 
     // 马车主干道矩形环线：任意两 u 路 × 两 v 路候选，主干道优先，每城区保留 ≤3
@@ -338,7 +352,7 @@ const City = (() => {
       if (ok) { carriageLoops.push(wp); kept++; }
     }
 
-    // 地块填立面（4 边连续排布，共享墙；小压角，转角盒自然交叠成 L 形角楼，禁随机散点）
+    // 地块填楼（4 边连续排布，共享墙；转角自然交叠成 L 形角楼）
     A.blocks.forEach((bu, bi) => B.blocks.forEach((bv, bj) => {
       fillRow(WX, WZ, ca, sa, bu, bv, 'pu', 0.8, types, di, bi, bj);
       fillRow(WX, WZ, ca, sa, bu, bv, 'nu', 0.8, types, di, bi, bj);
@@ -360,7 +374,7 @@ const City = (() => {
     return nodeBase;
   }
 
-  // 在地块一边连续排布立面模块
+  // 在地块一边连续排布 kk 楼房（贴街朝向，scale 0.85~1.3，偶发 ±0.5m 错位）
   function fillRow(WX, WZ, ca, sa, bu, bv, side, margin, types, di, bi, bj) {
     let along, fixed, nLx, nLz; // 沿向起讫、固定坐标、本地外法线
     if (side === 'pu') { fixed = bu.b; nLx = 1; nLz = 0; along = [bv.a, bv.b]; }
@@ -373,25 +387,164 @@ const City = (() => {
     const extent = (side === 'pu' || side === 'nu') ? (bu.b - bu.a) : (bv.b - bv.a);
     let cur = along[0] + margin;
     const end = along[1] - margin;
-    while (cur < end - 4) {
-      const type = types[(S() * types.length) | 0];
-      const T = TYPES[type];
-      let w = T.wMin + S() * (T.wMax - T.wMin);
+    let guard = 0;
+    while (cur < end - 3 && guard++ < 40) {
+      const letter = types[(S() * types.length) | 0];
+      const BB = kkBBox[letter];
+      // 两档 scale：街面主楼 0.85~1.3（约 55%），内填充小楼 0.42~0.75（约 45%，补密度）
+      let s = S() < 0.55 ? 0.85 + S() * 0.45 : 0.42 + S() * 0.33;
+      let w = BB.w * s, d = BB.d * s;
+      const dMax = extent * 0.52 - 0.3; // 进深钳制：对排在地块中部允许交叠（实心墙不可见）
+      if (d > dMax) {
+        const s2 = s * dMax / d;
+        if (s2 < 0.6) { cur += 2.5; continue; }
+        s = s2; w = BB.w * s; d = BB.d * s;
+      }
       w = Math.min(w, end - cur);
-      if (w < 4) break;
-      const d = Math.min(T.d, extent / 2 - 0.3); // 进深钳制：对排不互穿
-      const h = T.hMin + S() * (T.hMax - T.hMin);
-      const ac = cur + w / 2; // 沿向中心
+      if (w < 3) break;
+      const jit = S() < 0.22 ? (S() - 0.5) * 1.0 : 0;  // ±0.5m 沿向错位
+      const ryJit = S() < 0.12 ? (S() - 0.5) * 0.05 : 0; // 朝向以正交贴街为主
+      const ac = cur + w / 2 + jit;
       const u = (side === 'pu' || side === 'nu') ? (side === 'pu' ? fixed - d / 2 : fixed + d / 2) : ac;
       const v = (side === 'pv' || side === 'nv') ? (side === 'pv' ? fixed - d / 2 : fixed + d / 2) : ac;
       const x = WX(u, v), z = WZ(u, v);
-      // 立面落点 + 贴街一面均校验（防落水/压保留区）
+      // 落点 + 贴街一面均校验（防落水/压保留区），占用栅格防跨区重楼
       const fx = x + nx * d / 2, fz = z + nz * d / 2;
-      if (clearSpot(x, z) && clearSpot(fx, fz, -7)) {
+      if (clearSpot(x, z) && clearSpot(fx, fz, -7) && !occHit(x, z, Math.max(w, d), di)) {
         const base = World.height(x, z);
-        F.push({ type, x, z, ry, w, d, h, base, nx, nz, rowKey, di, bi, bj, side, enterable: false, collidable: false });
+        F.push({ type: letter, x, z, ry: ry + ryJit, w, d, h: BB.h * s, s, base, nx, nz, rowKey, di, bi, bj, side, enterable: false, collidable: false });
+        occAdd(x, z, Math.max(w, d), di);
       }
-      cur += w; // 共享墙：无间隙
+      cur += w * 0.62; // 共享墙：交叠成排屋（实心墙内交叠不可见）
+    }
+  }
+
+  /* ================= 城区间建筑带（沿两中心连线，把空白连起来） ================= */
+  function genBelt(p0, p1, width, di, spacing) {
+    const dx = p1.x - p0.x, dz = p1.z - p0.z;
+    const len = Math.hypot(dx, dz);
+    if (len < 40) return;
+    const ux = dx / len, uz = dz / len;        // 沿线方向
+    const pnx = -uz, pnz = ux;                 // 法线（两侧排楼）
+    let prevNode = -1, rowIdx = 0, pos = 30;
+    while (pos < len - 30) {
+      const cx = p0.x + ux * pos, cz = p0.z + uz * pos;
+      const h = World.height(cx, cz);
+      const ok = h > 1.5 && h < 34 && World.normal(cx, cz).y > 0.62;
+      let ni = -1;
+      if (ok) {
+        ni = roadNodes.length;
+        roadNodes.push({ x: cx, z: cz, y: h });
+        nodeAdj.push([]);
+        if (prevNode >= 0) addRoadEdge(prevNode, ni, width);
+        prevNode = ni;
+      } else prevNode = -1;
+      // 两侧各三排楼（沿街排贴街朝向，后排背对背朝外，每隔 14~18m 一排）
+      for (const side of [-1, 1]) {
+        for (let row = 0; row < 3; row++) {
+          const letter = KK[(S() * 8) | 0];
+          const BB = kkBBox[letter];
+          // 沿街排 0.85~1.3，后排 0.45~0.8
+          const s = row === 0 ? 0.85 + S() * 0.45 : 0.45 + S() * 0.35;
+          const w = BB.w * s, d = BB.d * s;
+          const off = width / 2 + d / 2 + 0.5 + row * (d * 0.9 + 1.0);
+          const bx = cx + pnx * off * side + ux * (S() - 0.5) * 2.0;
+          const bz = cz + pnz * off * side + uz * (S() - 0.5) * 2.0;
+          const fnx = row === 0 ? -pnx * side : pnx * side, fnz = row === 0 ? -pnz * side : pnz * side;
+          if (!ok || !clearSpot(bx, bz) || hitsAnyBox(bx, bz, 1) || occHit(bx, bz, Math.max(w, d), di)) continue;
+          const base = World.height(bx, bz);
+          F.push({
+            type: letter, x: bx, z: bz, ry: Math.atan2(fnx, fnz), w, d, h: BB.h * s, s, base,
+            nx: fnx, nz: fnz, rowKey: 'belt' + di + '_' + rowIdx + '_' + side + '_' + row, di, bi: 0, bj: 0,
+            side: side > 0 ? 'pu' : 'nu', enterable: false, collidable: false,
+          });
+          occAdd(bx, bz, Math.max(w, d), di);
+        }
+      }
+      // 建筑带路灯（每隔一排，交替侧）
+      if (ok && lampSpots.length < LAMP_CAP && rowIdx % 2 === 0) {
+        const side = rowIdx % 4 === 0 ? 1 : -1;
+        const lx = cx + pnx * (width / 2 + 1.3) * side, lz = cz + pnz * (width / 2 + 1.3) * side;
+        if (clearSpot(lx, lz) && lampClear(lx, lz)) {
+          lampSpots.push({ x: lx, z: lz, y: World.height(lx, lz), nx: pnx * side, nz: pnz * side });
+        }
+      }
+      if (ok) rowIdx++;
+      pos += spacing[0] + S() * spacing[1];
+    }
+  }
+
+  /* ================= 河岸排楼（泰晤士北岸 quayside，h≥1.5 阶地） ================= */
+  function genRiverbank(di) {
+    const RV = World.RIVER || null;
+    if (!RV) return;
+    // 河道中段 [1]→[6]（[-262,55]→[330,-114]），两岸偏移 48m+
+    for (let seg = 1; seg <= 5; seg++) {
+      const ax = RV[seg][0], az = RV[seg][1], bx = RV[seg + 1][0], bz = RV[seg + 1][1];
+      const len = Math.hypot(bx - ax, bz - az);
+      const ux = (bx - ax) / len, uz = (bz - az) / len;
+      for (const side of [-1, 1]) { // 两岸各试（落水侧自动跳过）
+        const pnx = -uz * side, pnz = ux * side;
+        let prevNode = -1;
+        for (let pos = 12; pos < len - 8; pos += 13 + S() * 4) {
+          const rx = ax + ux * pos, rz = az + uz * pos;
+          for (let row = 0; row < 2; row++) {
+            const letter = KK[(S() * 8) | 0];
+            const BB = kkBBox[letter];
+            const s = row === 0 ? 0.85 + S() * 0.45 : 0.45 + S() * 0.35;
+            const w = BB.w * s, d = BB.d * s;
+            const off = 48 + row * (d * 0.9 + 1.0) + d / 2;
+            const bx = rx + pnx * off + ux * (S() - 0.5) * 2;
+            const bz = rz + pnz * off + uz * (S() - 0.5) * 2;
+            const fnx = -pnx, fnz = -pnz; // 朝河
+            if (!clearSpot(bx, bz) || hitsAnyBox(bx, bz, 1) || occHit(bx, bz, Math.max(w, d), di)) continue;
+            const base = World.height(bx, bz);
+            F.push({
+              type: letter, x: bx, z: bz, ry: Math.atan2(fnx, fnz), w, d, h: BB.h * s, s, base,
+              nx: fnx, nz: fnz, rowKey: 'bank' + di + '_' + seg + '_' + side + '_' + ((pos / 14) | 0) + '_' + row, di, bi: 0, bj: 0,
+              side: 'pu', enterable: false, collidable: false,
+            });
+            occAdd(bx, bz, Math.max(w, d), di);
+          }
+          // 滨河步道（市民/巡警样条）
+          const wx = rx + pnx * 44, wz = rz + pnz * 44;
+          const wh = World.height(wx, wz);
+          if (wh > 2.0) {
+            const ni = roadNodes.length;
+            roadNodes.push({ x: wx, z: wz, y: wh });
+            nodeAdj.push([]);
+            if (prevNode >= 0) addRoadEdge(prevNode, ni, 5.5);
+            prevNode = ni;
+          } else prevNode = -1;
+        }
+      }
+    }
+  }
+
+  /* ================= 公园缘排楼（海德公园外圈 r≈90，面朝外，贝斯沃特路式） ================= */
+  function genParkEdge(di) {
+    const cx = POS.FLOWER.x, cz = POS.FLOWER.z;
+    let rowIdx = 0;
+    for (let a = 0; a < Math.PI * 2 - 0.1; a += 0.085 + S() * 0.03) {
+      for (let row = 0; row < 2; row++) {
+        const letter = KK[(S() * 8) | 0];
+        const BB = kkBBox[letter];
+        const s = row === 0 ? 0.85 + S() * 0.45 : 0.42 + S() * 0.33;
+        const w = BB.w * s, d = BB.d * s;
+        const r = 90 + row * (d * 0.9 + 1.0) + d / 2;
+        const bx = cx + Math.cos(a) * r + (S() - 0.5) * 2;
+        const bz = cz + Math.sin(a) * r + (S() - 0.5) * 2;
+        const fnx = Math.cos(a), fnz = Math.sin(a); // 面朝外
+        if (!clearSpot(bx, bz) || hitsAnyBox(bx, bz, 1) || occHit(bx, bz, Math.max(w, d), di)) continue;
+        const base = World.height(bx, bz);
+        F.push({
+          type: letter, x: bx, z: bz, ry: Math.atan2(fnx, fnz), w, d, h: BB.h * s, s, base,
+          nx: fnx, nz: fnz, rowKey: 'park' + di + '_' + rowIdx + '_' + row, di, bi: 0, bj: 0,
+          side: 'pu', enterable: false, collidable: false,
+        });
+        occAdd(bx, bz, Math.max(w, d), di);
+      }
+      rowIdx++;
     }
   }
 
@@ -412,15 +565,15 @@ const City = (() => {
       if (!byD.has(m.di)) byD.set(m.di, []);
       byD.get(m.di).push(m);
     }
-    // 可进入门厅/拱廊：每城区轮选 2~3 栋（酒馆/排屋/药房/剧院优先），≥12 栋
+    // 可进入门厅/拱廊：每城区轮选 2~3 栋（面宽/进深足够者），≥12 栋
     let picked = 0;
     for (const [di, arr] of byD) {
       const usedRows = new Set();
       let local = 0;
       for (const m of arr) {
-        if (local >= 3 || picked >= 15) break;
-        if (!['pub', 'townhouse', 'pharmacy', 'theatre'].includes(m.type)) continue;
-        if (m.w < 6.5 || m.h < 8 || usedRows.has(m.rowKey)) continue;
+        if (local >= 3 || picked >= 16) break;
+        if (m.w < 7 || m.h < 9 || usedRows.has(m.rowKey)) continue;
+        if (!clearSpot(m.x, m.z)) continue;
         usedRows.add(m.rowKey);
         m.enterable = true;
         local++; picked++;
@@ -429,11 +582,11 @@ const City = (() => {
     if (picked < 12) { // 兜底：全局放宽
       for (const m of F) {
         if (picked >= 12) break;
-        if (m.enterable || m.w < 6 || m.h < 7.5) continue;
+        if (m.enterable || m.w < 6 || m.h < 8) continue;
         m.enterable = true; picked++;
       }
     }
-    // 碰撞：每城区按「行」成段选取（同行连续选中 → 屋顶跳跃路线天然连续），每城区 ≤10 栋
+    // 碰撞：每城区按「行」成段选取（同行连续选中 → 屋顶跳跃路线天然连续），每城区 ≤36 栋，全局 ≥150
     let n = 0;
     for (const [di, arr] of byD) {
       const rows = new Map();
@@ -444,10 +597,10 @@ const City = (() => {
       }
       let local = 0;
       for (const [rk, ms] of rows) {
-        if (local >= 10) break;
-        if (S() > 0.55 && local >= 6) continue;
+        if (local >= 36) break;
+        if (S() > 0.5 && local >= 20) continue;
         for (const m of ms) {
-          if (local >= 10) break;
+          if (local >= 36) break;
           m.collidable = true;
           pushBox(m.x, m.z, m.w / 2 - 0.15, m.d / 2 - 0.15, m.ry);
           pushPlat(m.x, m.z, m.w / 2 - 0.5, m.d / 2 - 0.5, m.base + m.h + 0.1, m.ry);
@@ -455,10 +608,10 @@ const City = (() => {
         }
       }
     }
-    if (n < 45) { // 兜底：全局补足
+    if (n < 155) { // 兜底：全局补足
       for (const m of F) {
-        if (n >= 45) break;
-        if (m.enterable || m.collidable || m.h < 7.5) continue;
+        if (n >= 155) break;
+        if (m.enterable || m.collidable || m.h < 8) continue;
         m.collidable = true;
         pushBox(m.x, m.z, m.w / 2 - 0.15, m.d / 2 - 0.15, m.ry);
         pushPlat(m.x, m.z, m.w / 2 - 0.5, m.d / 2 - 0.5, m.base + m.h + 0.1, m.ry);
@@ -483,7 +636,7 @@ const City = (() => {
     }
     const cands = [];
     for (const a of F) {
-      if (!a.collidable || a.h < 8) continue;
+      if (!a.collidable || a.h < 10) continue;
       // 对街行：+u 侧对下一地块 -u 侧；+v 侧对下一地块 -v 侧
       const fk = a.side === 'pu' ? (a.di + '_' + (a.bi + 1) + '_' + a.bj + '_nu')
         : a.side === 'pv' ? (a.di + '_' + a.bi + '_' + (a.bj + 1) + '_nv') : null;
@@ -491,7 +644,7 @@ const City = (() => {
       const facing = rowMap.get(fk);
       if (!facing) continue;
       for (const b of facing) {
-        if (!b.collidable || b.h < 8) continue;
+        if (!b.collidable || b.h < 10) continue;
         const dx = b.x - a.x, dz = b.z - a.z;
         const gap = dx * a.nx + dz * a.nz - (a.d + b.d) / 2;  // 街/巷宽
         if (gap < 2.5 || gap > 14.5) continue;
@@ -531,9 +684,9 @@ const City = (() => {
         if (!facing) continue;
         let best = null, bestScore = 1e9;
         for (const a of ms) {
-          if (a.h < 8) continue;
+          if (a.h < 10) continue;
           for (const b of facing) {
-            if (b.h < 8) continue;
+            if (b.h < 10) continue;
             const dx = b.x - a.x, dz = b.z - a.z;
             const gap = dx * a.nx + dz * a.nz - (a.d + b.d) / 2;
             if (gap < 2.5 || gap > 9) continue;
@@ -550,7 +703,7 @@ const City = (() => {
         }
         if (!best) continue;
         const mx = (best.a.x + best.a.nx * best.a.d / 2 + best.b.x + best.b.nx * best.b.d / 2) / 2;
-        const mz = (best.a.z + best.a.nz * best.a.d / 2 + best.b.z + best.b.nz * best.b.d / 2) / 2;
+        const mz = (best.a.z + best.a.nz * best.a.d / 2 + best.b.x + best.b.nz * best.b.d / 2) / 2;
         if (placed.some(p => Math.hypot(p.x - mx, p.z - mz) < 5)) continue;
         const ry = Math.atan2(best.a.nx, best.a.nz);
         for (const m of [best.a, best.b]) { // 锚点屋顶补 platform（可站立）
@@ -560,16 +713,73 @@ const City = (() => {
           }
         }
         pushPlat(mx, mz, 0.55, best.gap / 2 + 0.8, best.top, ry);
-        staticB.box(0.9, 0.14, best.gap + 1.4, mx, best.top - 0.07, mz, ry, LC(0x3c2c1a));
+        staticB.box(0.9, 0.14, best.gap + 1.4, mx, best.top - 0.15, mz, ry, LC(0x3c2c1a));
         placed.push({ x: mx, z: mz });
         plankCount++;
       }
     }
   }
 
-  // 可进入建筑：独立合并 mesh（3 墙 + 留门洞前墙 + 内景），不进 instanced
+  /* ================= 模型实例化助手（kk/ph2 现成模型） ================= */
+  const partsCache = {};
+  function modelParts(name) {
+    if (name in partsCache) return partsCache[name];
+    const src = models[name];
+    if (!src) return (partsCache[name] = null);
+    src.scene.updateMatrixWorld(true);
+    const parts = [];
+    src.scene.traverse(o => { if (o.isMesh) parts.push({ geo: o.geometry, mat: o.material, mw: o.matrixWorld.clone() }); });
+    return (partsCache[name] = parts.length ? parts : null);
+  }
+  const _imD = new THREE.Object3D();
+  const _imM = new THREE.Matrix4();
+  // 按模型网格拆分合批；arr: [{x,y,z,ry,s|sx,sy,sz}]
+  function instModel(name, arr, countProps = true) {
+    if (!arr || !arr.length) return;
+    if (countProps) stats.props += arr.length;
+    const parts = modelParts(name);
+    if (!parts) return;
+    for (const p of parts) {
+      const im = new THREE.InstancedMesh(p.geo, p.mat, arr.length);
+      for (let i = 0; i < arr.length; i++) {
+        const a = arr[i];
+        const s = a.s != null ? a.s : 1;
+        _imD.position.set(a.x, a.y, a.z);
+        _imD.rotation.set(0, a.ry || 0, 0);
+        _imD.scale.set(a.sx != null ? a.sx : s, a.sy != null ? a.sy : s, a.sz != null ? a.sz : s);
+        _imD.updateMatrix();
+        _imM.copy(_imD.matrix).multiply(p.mw);
+        im.setMatrixAt(i, _imM);
+      }
+      im.instanceMatrix.needsUpdate = true;
+      im.frustumCulled = false;
+      scene.add(im);
+    }
+  }
+  // 单件摆放（221B 内景/雕塑等少量高精度件）
+  function placeModel(name, x, y, z, ry, s) {
+    const src = models[name];
+    stats.props++;
+    if (!src) return null;
+    const m = src.scene.clone(true);
+    m.position.set(x, y, z);
+    m.rotation.y = ry || 0;
+    if (s) m.scale.multiplyScalar(s);
+    scene.add(m);
+    return m;
+  }
+  // 可进入建筑家具：先收集后合批
+  const furnPl = {};
+  function furnPlace(name, x, y, z, ry, s) {
+    (furnPl[name] || (furnPl[name] = [])).push({ x, y, z, ry: ry || 0, s: s || 1 });
+  }
+  function flushFurn() {
+    for (const name in furnPl) instModel(name, furnPl[name]);
+  }
+
+  // 可进入建筑：独立合并 mesh（3 墙 + 留门洞前墙）+ kk_f 家具（合批）
   function buildEnterable(m) {
-    const T = TYPES[m.type];
+    const T = KK_STYLE[m.type];
     const { x, z, ry, w, d, h, base, nx, nz } = m;
     const tx = nz, tz = -nx; // 沿向
     const wall = LC(T.wall), floorC = LC(0x2a221a), woodC = LC(0x3a2a1c);
@@ -595,20 +805,25 @@ const City = (() => {
     // 地面 + 坡屋顶
     staticB.box(w - 0.4, 0.18, d - 0.4, cx, base + 0.09, cz, ry, floorC);
     staticB.prism(w * 1.06, T.rh, d * 1.06, cx, base + h, cz, ry, LC(T.roof));
-    // 内景：柜台 + 方桌 + 双椅 + 吊灯（自发光）
+    // 内景：柜台（保留）+ kk_f 家具 2~4 件（桌椅灯，合批）
     const ct = at(-w / 4, -d / 2 + 1.1);
     staticB.box(2.6, 1.1, 0.7, ct[0], base + 0.55, ct[1], ry, woodC);
+    const fy = base + 0.18;
     const tb = at(w / 5, 0.3);
-    staticB.box(1.3, 0.1, 0.9, tb[0], base + 0.78, tb[1], ry, woodC);
-    for (const [sx, sz] of [[-0.5, -0.3], [0.5, -0.3], [-0.5, 0.45], [0.5, 0.45]]) {
-      const lg = at(w / 5 + sx, 0.3 + sz);
-      staticB.box(0.09, 0.75, 0.09, lg[0], base + 0.38, lg[1], ry, woodC);
+    furnPlace('kk_f_table_small', tb[0], fy, tb[1], ry, 1);
+    const ch = at(w / 5 + 1.15, 0.3);
+    furnPlace('kk_f_chair_A', ch[0], fy, ch[1], ry + Math.PI, 1);
+    if (S() < 0.6) {
+      const ch2 = at(w / 5 - 1.15, 0.3);
+      furnPlace('kk_f_chair_stool', ch2[0], fy, ch2[1], ry, 1);
     }
-    for (const s of [-1, 1]) {
-      const ch = at(w / 5 + s * 1.05, 0.3);
-      staticB.box(0.5, 0.1, 0.5, ch[0], base + 0.45, ch[1], ry, woodC);
-      staticB.box(0.5, 0.55, 0.08, ch[0], base + 0.75, ch[1] - nz * 0.24, ry, woodC);
+    if (S() < 0.55) {
+      const lp = at(-w / 3, d / 5);
+      furnPlace('kk_f_lamp_standing', lp[0], fy, lp[1], ry, 1);
+    } else {
+      furnPlace('kk_f_lamp_table', tb[0] + nx * 0.2, fy + 0.75, tb[1] + nz * 0.2, ry, 1);
     }
+    // 吊灯（自发光）
     const lamp = at(0, 0);
     signsB.cyl(0.14, 0.24, 0.3, 7, lamp[0], base + h - 1.1, lamp[1], LC(0xffc06a));
     signsB.box(0.03, 1.0, 0.03, lamp[0], base + h - 0.5, lamp[1], 0, LC(0x8a6a30));
@@ -638,6 +853,8 @@ const City = (() => {
     const w = 9, d = 8, h = 6.4;
     const brick = LC(0x6e3b2e), stone = LC(0x6a6258), wood = LC(0x3a2a1c);
     const at = (du, dv) => [cx + tx * du + nx * dv, cz + tz * du + nz * dv];
+    const face = (px, pz) => Math.atan2(px, pz); // 模型 +z 朝向世界 (px,pz)
+    const fy = base + 0.18;
     // 外墙（前墙留 2.2m 门洞）
     const bw = at(0, -d / 2 + 0.15);
     staticB.box(w, h, 0.3, bw[0], base + h / 2, bw[1], ry, brick);
@@ -678,18 +895,50 @@ const City = (() => {
     fireLight.position.set(fp[0] - nx * 0.6, base + 1.1, fp[1] - nz * 0.6);
     scene.add(fireLight);
     fire = { mesh: fireMesh, light: fireLight };
-    // —— 化学桌（瓶罐小盒） ——
+    // —— 家具重装（kk_f / ph2 现成模型） ——
+    // 地毯（炉火前）
+    const rg = at(-w / 2 + 2.4, -d / 2 + 2.6);
+    placeModel('kk_f_rug_rectangle_A', rg[0], fy, rg[1], ry, 1.4);
+    // 扶手椅 ×2 + 长沙发（围炉）
+    const ac1 = at(-w / 2 + 0.7, -d / 2 + 2.4);
+    placeModel('kk_f_armchair', ac1[0], fy, ac1[1], face(fp[0] - ac1[0], fp[1] - ac1[1]), 1);
+    const ac2 = at(-w / 2 + 2.9, -d / 2 + 1.6);
+    placeModel('kk_f_armchair', ac2[0], fy, ac2[1], face(fp[0] - ac2[0], fp[1] - ac2[1]), 1);
+    const cf = at(w / 2 - 2.6, -d / 2 + 2.3);
+    placeModel('kk_f_couch', cf[0], fy, cf[1], face(fp[0] - cf[0], fp[1] - cf[1]), 1);
+    // 旧书架 ×2（侧墙）+ 百科全书/书套散落
+    const bs1 = at(-w / 2 + 0.35, 0.2);
+    placeModel('ph2_wooden_bookshelf_worn', bs1[0], fy, bs1[1], ry + Math.PI / 2, 1);
+    const bs2 = at(w / 2 - 0.35, -1.2);
+    placeModel('ph2_wooden_bookshelf_worn', bs2[0], fy, bs2[1], ry - Math.PI / 2, 1);
+    const bk1 = at(w / 2 - 1.6, -d / 2 + 2.2);
+    placeModel('ph2_book_encyclopedia_set_01', bk1[0], fy + 0.82, bk1[1], S() * 6.28, 1);
+    const bk2 = at(-w / 2 + 1.2, d / 2 - 1.6);
+    placeModel('kk_f_book_set', bk2[0], fy + 0.05, bk2[1], S() * 6.28, 1);
+    // 座钟：落地大钟（墙角）+ 壁炉台钟 + 挂钟
+    const gc = at(w / 2 - 0.9, -d / 2 + 0.9);
+    placeModel('ph2_vintage_grandfather_clock_01', gc[0], fy, gc[1], face(-gc[0] + cx, -gc[1] + cz), 1);
+    placeModel('ph2_mantel_clock_01', fp[0] - nx * 0.1, base + 2.28, fp[1] - nz * 0.1, ry, 1);
+    const wc = at(w / 2 - 0.2, -0.8);
+    placeModel('ph2_wall_clock', wc[0] - nx * 0.05, base + 2.5, wc[1] - nz * 0.05, ry - Math.PI / 2, 1);
+    // 立灯（沙发角）+ 画框 ×3
+    const sl = at(w / 2 - 0.8, d / 2 - 1.4);
+    placeModel('kk_f_lamp_standing', sl[0], fy, sl[1], 0, 1);
+    const pf1 = at(-w / 2 + 0.2, 2.2);
+    placeModel('kk_f_pictureframe_large_A', pf1[0] - nx * 0.05, base + 1.9, pf1[1] - nz * 0.05, ry + Math.PI / 2, 1);
+    const pf2 = at(w / 2 - 0.2, 1.6);
+    placeModel('kk_f_pictureframe_medium', pf2[0] - nx * 0.05, base + 2.1, pf2[1] - nz * 0.05, ry - Math.PI / 2, 1);
+    const pf3 = at(0.5, -d / 2 + 0.2);
+    placeModel('kk_f_pictureframe_medium', pf3[0] - nx * 0.05, base + 2.2, pf3[1] - nz * 0.05, ry, 1);
+    // —— 化学桌（kk_f_table_medium + 保留瓶罐小件 + 油灯） ——
     const ct = at(w / 2 - 1.8, -d / 2 + 1.4);
-    staticB.box(1.6, 0.12, 0.8, ct[0], base + 0.85, ct[1], ry, wood);
-    for (const s of [-1, 1]) for (const k of [-1, 1]) {
-      const lg = at(w / 2 - 1.8 + s * 0.65, -d / 2 + 1.4 + k * 0.3);
-      staticB.box(0.08, 0.85, 0.08, lg[0], base + 0.42, lg[1], ry, wood);
-    }
+    placeModel('kk_f_table_medium', ct[0], fy, ct[1], ry, 1);
     const glassCols = [0x3a6a44, 0x8a5a22, 0x4a5a6a, 0x6a3a3a, 0x5a6a3a];
     for (let i = 0; i < 5; i++) {
       const bt = at(w / 2 - 1.8 - 0.6 + i * 0.3, -d / 2 + 1.4 + (i % 2) * 0.22);
       staticB.cyl(0.07, 0.09, 0.22 + (i % 3) * 0.06, 6, bt[0], base + 1.02, bt[1], LC(glassCols[i]));
     }
+    placeModel('ph2_vintage_oil_lamp', ct[0] + tx * 0.55, base + 0.98, ct[1] + tz * 0.55, 0, 1);
     // —— 提琴（侧墙挂：琴身小盒 + 琴颈 + 4 弦 LineSegments） ——
     const vn = at(-w / 2 + 0.2, 0.6);
     staticB.box(0.1, 0.4, 0.24, vn[0], base + 1.75, vn[1], 0, LC(0x7a4a22));
@@ -733,7 +982,9 @@ const City = (() => {
     }
   }
 
-  // 考文特花园玻璃顶市场（VILLAGE）
+  // 考文特花园玻璃顶市场（VILLAGE）+ 可穿行市集（kk_r 摊位/食品）
+  const FOOD_MODELS = ['kk_r_crate_buns', 'kk_r_crate_carrots', 'kk_r_crate_cheese', 'kk_r_crate_ham',
+    'kk_r_crate_lettuce', 'kk_r_crate_onions', 'kk_r_crate_potatoes', 'kk_r_crate_steak', 'kk_r_crate_tomatoes'];
   function buildMarket() {
     const cx = POS.VILLAGE.x, cz = POS.VILLAGE.z, base = World.height(cx, cz);
     const iron = LC(0x23282e), stone = LC(0x6a6258), wood = LC(0x3a2a1c);
@@ -748,13 +999,55 @@ const City = (() => {
     staticB.box(19.6, 2.4, 0.5, cx, base + 9.2, cz + 15, 0, stone);
     // 玻璃拱顶（半透明）
     glassB.arc(10, 30, 10, cx, base + 8, cz, LC(0x9fb4c0));
-    // 货摊 ×6 + 吊灯
+    // 吊灯
     for (let i = 0; i < 6; i++) {
-      const z = cz - 10 + i * 4, x = cx + (i % 2 ? 3.5 : -3.5);
-      staticB.box(2.6, 1.0, 1.6, x, base + 0.5, z, 0, wood);
-      staticB.box(2.8, 0.12, 1.8, x, base + 1.9, z, 0, LC(i % 2 ? 0x6a2a2a : 0x2a4a5a));
-      signsB.cyl(0.12, 0.2, 0.25, 6, cx + (i % 2 ? -1 : 1), base + 5.4, z, LC(0xffc06a));
+      signsB.cyl(0.12, 0.2, 0.25, 6, cx + (i % 2 ? -1 : 1), base + 5.4, cz - 10 + i * 4, LC(0xffc06a));
     }
+    // —— 摊位 ≥12：木桌（kk_r_kitchentable）+ 彩条棚 + 桌上食品（合批收集） ——
+    const stallDefs = [];
+    for (let i = 0; i < 6; i++) stallDefs.push({ x: cx + (i % 2 ? 3.5 : -3.5), z: cz - 10 + i * 4, ry: i % 2 ? Math.PI : 0 }); // 棚内 6
+    for (let i = 0; i < 7; i++) { // 广场外沿 7（可穿行，留通道）
+      const a = -0.9 + i * 0.3;
+      stallDefs.push({ x: cx + Math.sin(a) * 15, z: cz + 14 + Math.cos(a) * 2.5, ry: a * 0.6 });
+    }
+    const tblA = [], tblB = [], food = {}, bowls = [], jars = [], baskets = [];
+    for (let i = 0; i < stallDefs.length; i++) {
+      const st = stallDefs[i];
+      const y = World.height(st.x, st.z);
+      const ry = st.ry, c = Math.cos(ry), s = Math.sin(ry);
+      const at = (du, dv) => [st.x + du * c + dv * s, st.z - du * s + dv * c];
+      (i % 2 ? tblB : tblA).push({ x: st.x, y, z: st.z, ry, s: 1 });
+      // 彩条棚（4 细柱 + 坡棚顶）
+      const colC = LC(i % 2 ? 0x6a2a2a : 0x2a4a5a);
+      for (const [sx, sz] of [[-1.1, -0.8], [1.1, -0.8], [-1.1, 0.8], [1.1, 0.8]]) {
+        const p = at(sx, sz);
+        staticB.box(0.08, 2.1, 0.08, p[0], y + 1.05, p[1], 0, wood);
+      }
+      staticB.prism(2.7, 0.7, 2.1, st.x, y + 2.1, st.z, ry, colC);
+      // 桌上食品 4~5 件 + 碗/罐/篮
+      const nf = 5 + ((S() * 2) | 0); // 每摊 5~6 件食品，合计 ≥60
+      for (let k = 0; k < nf; k++) {
+        const fm = FOOD_MODELS[(i * 3 + k) % FOOD_MODELS.length];
+        const p = at(-0.85 + k * (1.7 / Math.max(1, nf - 1)), 0.1 + (k % 2) * 0.35);
+        (food[fm] || (food[fm] = [])).push({ x: p[0], y: y + 0.82, z: p[1], ry: ry + (S() - 0.5) * 0.5, s: 1 });
+      }
+      const bp = at(0.9, -0.35);
+      bowls.push({ x: bp[0], y: y + 0.85, z: bp[1], ry: 0, s: 1 });
+      const jp = at(-0.9, -0.35);
+      jars.push({ x: jp[0], y: y + 0.85, z: jp[1], ry: 0, s: 1 });
+      if (i % 2 === 0) {
+        const kp = at(1.3, 0.9);
+        baskets.push({ x: kp[0], y, z: kp[1], ry: S() * 6.28, s: 1 });
+      }
+    }
+    instModel('kk_r_kitchentable_A', tblA);
+    instModel('kk_r_kitchentable_B_large', tblB);
+    for (const fm in food) instModel(fm, food[fm]);
+    instModel('kk_r_bowl', bowls);
+    instModel('kk_r_jar_A_medium', jars.filter((_, i) => i % 3 !== 2));
+    instModel('kk_r_jar_B_medium', jars.filter((_, i) => i % 3 === 2));
+    instModel('ph2_wicker_basket_01', baskets.filter((_, i) => i % 2 === 0));
+    instModel('ph2_wicker_basket_02', baskets.filter((_, i) => i % 2 === 1));
     pushPlat(cx, cz, 11, 16, base + 0.25, 0); // 市场地面（可穿行，柱默认穿透）
   }
 
@@ -1046,16 +1339,58 @@ const City = (() => {
     }
   }
 
-  /* ================= 煤气灯 ================= */
+  /* ================= kk 楼房合批（8 型 InstancedMesh）+ 墙根雨浸带 + 店招 ================= */
+  const SIGN_COLS = [0xd8a050, 0xc8503a, 0x4a9a6a, 0x4a7aaa, 0xc8a048, 0xa06830];
+  function buildFacadeMeshes() {
+    const perType = {};
+    for (const m of F) {
+      if (m.enterable) continue;
+      (perType[m.type] || (perType[m.type] = [])).push(m);
+    }
+    for (const L of KK) {
+      const arr = perType[L];
+      if (!arr || !arr.length) continue;
+      const spots = arr.map(m => ({ x: m.x, y: m.base - 0.05, z: m.z, ry: m.ry, s: m.s }));
+      instModel('kk_cb_building_' + L, spots, false);
+    }
+    // 墙根 1m 雨浸暗带（全部建筑合批一条）
+    const dm = new THREE.Object3D();
+    const skirt = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), matSkirt, F.length);
+    F.forEach((m, i) => {
+      dm.position.set(m.x, m.base + 0.15, m.z);
+      dm.rotation.set(0, m.ry, 0);
+      dm.scale.set(m.w + 0.1, 1.3, m.d + 0.1);
+      dm.updateMatrix();
+      skirt.setMatrixAt(i, dm.matrix);
+    });
+    skirt.instanceMatrix.needsUpdate = true; skirt.frustumCulled = false;
+    scene.add(skirt);
+    // 店招发光 quad（THEATRE/VILLAGE 城区，二层以下，signsB 式 Basic 合批，≥100 块）
+    for (const m of F) {
+      if (m.enterable) continue;
+      if (m.di !== 1 && m.di !== 2) continue;   // THEATRE / VILLAGE
+      if (S() > 0.55) continue;
+      const fx = m.x + m.nx * (m.d / 2 + 0.09), fz = m.z + m.nz * (m.d / 2 + 0.09);
+      const col = LC(SIGN_COLS[(S() * SIGN_COLS.length) | 0]);
+      signsB.box(Math.min(m.w * 0.8, 6), 0.9, 0.08, fx, m.base + 2.9, fz, m.ry, col);
+      signCount++;
+    }
+    stats.facades = F.length;
+  }
+
+  /* ================= 煤气灯（模型合批 + 真实点光源 ≤14 + 假灯光晕） ================= */
   function buildLamps() {
-    const pole = LC(0x191d22), arm = LC(0x23282e);
-    for (const l of lampSpots) {
+    // 模型合批（三型轮替）
+    const byModel = [[], [], []];
+    lampSpots.forEach((l, i) => {
       const ry = Math.atan2(-l.nz, l.nx); // 臂朝路心
-      staticB.box(0.16, 5.2, 0.16, l.x, l.y + 2.6, l.z, 0, pole);
-      staticB.box(0.3, 0.5, 0.3, l.x, l.y + 0.25, l.z, 0, pole);
-      staticB.box(1.0, 0.12, 0.12, l.x - l.nx * 0.5, l.y + 5.0, l.z - l.nz * 0.5, ry, arm);
-      // 玻璃灯罩（自发光假灯）+ 光晕由 Points 提供
-      signsB.cyl(0.16, 0.24, 0.5, 7, l.x - l.nx * 1.0, l.y + 4.75, l.z - l.nz * 1.0, LC(0xffbe66));
+      byModel[i % 3].push({ x: l.x, y: l.y, z: l.z, ry, s: 1 });
+    });
+    byModel.forEach((arr, i) => { instModel(LAMP_MODELS[i], arr, false); });
+    stats.lamps = lampSpots.length;
+    // 灯头暖光罩（自发光假灯，signsB 合批）
+    for (const l of lampSpots) {
+      signsB.cyl(0.16, 0.24, 0.5, 7, l.x - l.nx * 0.6, l.y + 5.0, l.z - l.nz * 0.6, LC(0xffbe66));
     }
     // 真实点光源 ≤14：优先 SPAWN/市场/SHRINE/TOWER/THEATRE/CLUB 周围
     const targets = [
@@ -1075,14 +1410,14 @@ const City = (() => {
     }
     for (const l of chosen) {
       const light = new THREE.PointLight(0xffb45a, 0.9, 24, 1.8);
-      light.position.set(l.x - l.nx * 1.0, l.y + 4.6, l.z - l.nz * 1.0);
+      light.position.set(l.x - l.nx * 0.6, l.y + 4.9, l.z - l.nz * 0.6);
       scene.add(light);
       World.keyLights.push({ light, base: 0.9 }); // 强风摇曳由 world.js 驱动
     }
     // 假灯光晕：共享 Points
     const gp = new Float32Array(lampSpots.length * 3);
     lampSpots.forEach((l, i) => {
-      gp[i * 3] = l.x - l.nx * 1.0; gp[i * 3 + 1] = l.y + 4.75; gp[i * 3 + 2] = l.z - l.nz * 1.0;
+      gp[i * 3] = l.x - l.nx * 0.6; gp[i * 3 + 1] = l.y + 5.0; gp[i * 3 + 2] = l.z - l.nz * 0.6;
     });
     const gg = new THREE.BufferGeometry();
     gg.setAttribute('position', new THREE.BufferAttribute(gp, 3));
@@ -1106,7 +1441,7 @@ const City = (() => {
     return _glowTex;
   }
 
-  /* ================= 暖窗（InstancedMesh 发光 quad） ================= */
+  /* ================= 暖窗（InstancedMesh 发光 quad，≥800） ================= */
   let winMesh = null, winMeshSil = null;
   function winTexture(sil) {
     const c = document.createElement('canvas'); c.width = 64; c.height = 96;
@@ -1128,33 +1463,33 @@ const City = (() => {
     return tex;
   }
   function buildWindows() {
-    // 从立面模块采样二层/三层窗位
+    // 从 kk 建筑墙面采样 2~4 层窗位（每栋 2~8 扇）
     for (const m of F) {
       if (m.enterable) continue;
-      const slots = [];
-      const across = m.w > 8 ? 2 : 1;
-      for (let a = 0; a < across; a++) {
-        const off = across === 2 ? (a ? m.w * 0.24 : -m.w * 0.24) : 0;
-        slots.push({ y: m.base + 4.3, off });
-        if (m.h > 10.5) slots.push({ y: m.base + 7.4, off });
-      }
-      for (const s of slots) {
-        if (S() > 0.78) continue;
-        const tx = m.nz, tz = -m.nx;
-        windowsList.push({
-          x: m.x + m.nx * (m.d / 2 + 0.07) + tx * s.off,
-          y: s.y,
-          z: m.z + m.nz * (m.d / 2 + 0.07) + tz * s.off,
-          ry: m.ry, sil: S() < 0.12,
-        });
+      const floors = Math.min(4, Math.max(2, Math.round(m.h / 4.6)));
+      const across = m.w > 9 ? 2 : 1;
+      const tx = m.nz, tz = -m.nx;
+      for (let f = 0; f < floors; f++) {
+        const y = m.base + 3.4 + f * 3.3;
+        if (y > m.base + m.h - 1.6) continue;
+        for (let a = 0; a < across; a++) {
+          if (S() > 0.8) continue;
+          const off = across === 2 ? (a ? m.w * 0.24 : -m.w * 0.24) : 0;
+          windowsList.push({
+            x: m.x + m.nx * (m.d / 2 + 0.07) + tx * off,
+            y,
+            z: m.z + m.nz * (m.d / 2 + 0.07) + tz * off,
+            ry: m.ry, sil: S() < 0.12,
+          });
+        }
       }
     }
-    // 确定性洗牌后限量 320
+    // 确定性洗牌后限量 1100
     for (let i = windowsList.length - 1; i > 0; i--) {
       const j = (S() * (i + 1)) | 0;
       const t = windowsList[i]; windowsList[i] = windowsList[j]; windowsList[j] = t;
     }
-    const list = windowsList.slice(0, 320);
+    const list = windowsList.slice(0, 1100);
     const plain = list.filter(w => !w.sil), sil = list.filter(w => w.sil);
     const dummy = new THREE.Object3D();
     const col = new THREE.Color();
@@ -1186,39 +1521,233 @@ const City = (() => {
     stats.windows = list.length;
   }
 
-  /* ================= 市民（4 变体 InstancedMesh + 20m 内独立池） ================= */
+  /* ================= 街道家具 ×10（全部 instanced 合批） ================= */
+  const BARREL_MODELS = ['ph2_wooden_barrels_01', 'ph2_wine_barrel_01', 'ph2_barrel_03'];
+  const CRATE_MODELS = ['ph2_wooden_crate_01', 'ph2_wooden_crate_02', 'ph2_old_military_crate', 'kk_cb_box_A', 'kk_cb_box_B'];
+  const TRASH_MODELS = ['kk_cb_dumpster', 'kk_cb_trash_A', 'kk_cb_trash_B'];
+  function scatterProps() {
+    const valid = roadEdges.map((e, i) => e.valid ? i : -1).filter(i => i >= 0);
+    const barrels = [], crates = [], trash = [];
+    if (valid.length) {
+      let guard = 0;
+      while ((barrels.length < 95 || crates.length < 135 || trash.length < 45) && guard++ < 4000) {
+        const e = roadEdges[valid[(S() * valid.length) | 0]];
+        const a = roadNodes[e.a], b = roadNodes[e.b];
+        const t = S();
+        const side = S() < 0.5 ? 1 : -1;
+        const off = e.width / 2 + 0.6 + S() * 1.8;
+        const x = a.x + (b.x - a.x) * t - e.dz * off * side;
+        const z = a.z + (b.z - a.z) * t + e.dx * off * side;
+        if (!clearSpot(x, z)) continue;
+        if (hitsAnyBox(x, z, 0.4)) continue;
+        const y = World.height(x, z);
+        const alley = e.width < 5;
+        const r = S();
+        if ((r < 0.32 || (alley && r < 0.5)) && barrels.length < 95) { // 桶堆 1~3
+          const n = 1 + ((S() * 3) | 0);
+          for (let k = 0; k < n && barrels.length < 95; k++) {
+            barrels.push({ x: x + (S() - 0.5) * 1.4, y, z: z + (S() - 0.5) * 1.4, ry: S() * 6.28, s: 0.9 + S() * 0.3 });
+          }
+        } else if (r < 0.78 && crates.length < 135) { // 箱堆 1~3
+          const n = 1 + ((S() * 3) | 0);
+          for (let k = 0; k < n && crates.length < 135; k++) {
+            crates.push({ x: x + (S() - 0.5) * 1.6, y, z: z + (S() - 0.5) * 1.6, ry: S() * 6.28, s: 0.9 + S() * 0.35 });
+          }
+        } else if (trash.length < 45) {
+          trash.push({ x, y, z, ry: S() * 6.28, s: 0.9 + S() * 0.25 });
+        }
+      }
+    }
+    // 码头（DOCKS）：吊机 ×3 + 管道/排水槽 ×10 + 麻袋木桶堆（复用桶/箱）
+    const dcx = POS.DOCKS.x, dcz = POS.DOCKS.z;
+    const cranes = [];
+    for (const t of [0.755, 0.8, 0.845]) {
+      const p = World.riverPoint(t);
+      let dx = dcx - p.x, dz = dcz - p.z;
+      const dl = Math.hypot(dx, dz) || 1; dx /= dl; dz /= dl;
+      const x = p.x + dx * 16, z = p.z + dz * 16;
+      const y = World.height(x, z);
+      if (y > 1.5) cranes.push({ x, y, z, ry: Math.atan2(-dx, -dz), s: 1 });
+    }
+    instModel('ph2_overhead_crane', cranes);
+    const pipes = [], gutters = [];
+    let dg = 0;
+    while (pipes.length + gutters.length < 10 && dg++ < 200) {
+      const x = dcx + (S() - 0.5) * 90, z = dcz + (S() - 0.5) * 60;
+      const y = World.height(x, z);
+      if (y < 1.5 || World.riverDist(x, z) < 18 || World.riverDist(x, z) > 60) continue;
+      (S() < 0.5 ? pipes : gutters).push({ x, y, z, ry: S() * 6.28, s: 1 });
+      // 麻袋/木桶堆
+      if (barrels.length < 120 && S() < 0.8) barrels.push({ x: x + 1.5, y, z: z + 1, ry: S() * 6.28, s: 1 });
+      if (crates.length < 155 && S() < 0.6) crates.push({ x: x - 1.5, y, z: z - 1, ry: S() * 6.28, s: 1 });
+    }
+    instModel('ph2_modular_industrial_pipes_01', pipes);
+    instModel('ph2_modular_metal_gutter', gutters);
+    // 铸造厂外缘（VOLCANO 110~180m 环，密度减半）：工业灯 ×8 + 管道 ×8 + 废桶 ×15
+    const fLampsA = [], fLampsB = [], fPipes = [];
+    const vcx = POS.VOLCANO.x, vcz = POS.VOLCANO.z;
+    let fg = 0;
+    while ((fLampsA.length + fLampsB.length < 8 || fPipes.length < 8 || barrels.length < 135) && fg++ < 600) {
+      const a = S() * 6.28, rr = 110 + S() * 70;
+      const x = vcx + Math.cos(a) * rr, z = vcz + Math.sin(a) * rr;
+      const y = World.height(x, z);
+      if (y < 8 || y > 70 || World.normal(x, z).y < 0.5) continue;
+      const r = S();
+      if (r < 0.35 && fLampsA.length + fLampsB.length < 8) {
+        // 矮杆 + 工业吊灯/壁灯
+        const ry = S() * 6.28;
+        staticB.box(0.18, 3.4, 0.18, x, y + 1.7, z, 0, LC(0x23282e));
+        staticB.box(1.0, 0.16, 0.16, x + Math.sin(ry) * 0.5, y + 3.3, z + Math.cos(ry) * 0.5, ry, LC(0x23282e));
+        const spot = { x: x + Math.sin(ry) * 1.0, y: y + 2.5, z: z + Math.cos(ry) * 1.0, ry, s: 1 };
+        (fLampsA.length <= fLampsB.length ? fLampsA : fLampsB).push(spot);
+        signsB.cyl(0.14, 0.2, 0.26, 7, spot.x, spot.y + 0.5, spot.z, LC(0xffb45a));
+      } else if (r < 0.7 && fPipes.length < 8) {
+        fPipes.push({ x, y, z, ry: S() * 6.28, s: 1 });
+      } else if (barrels.length < 135) {
+        barrels.push({ x, y, z, ry: S() * 6.28, s: 0.9 + S() * 0.3 });
+      }
+    }
+    instModel('ph2_hanging_industrial_lamp', fLampsA);
+    instModel('ph2_industrial_wall_lamp', fLampsB);
+    instModel('ph2_modular_industrial_pipes_01', fPipes);
+    // 桶/箱/垃圾按型号分发合批
+    const bSplit = [[], [], []];
+    barrels.forEach((p, i) => bSplit[i % 3].push(p));
+    bSplit.forEach((arr, i) => instModel(BARREL_MODELS[i], arr));
+    const cSplit = [[], [], [], [], []];
+    crates.forEach((p, i) => cSplit[i % 5].push(p));
+    cSplit.forEach((arr, i) => instModel(CRATE_MODELS[i], arr));
+    const tSplit = [[], [], []];
+    trash.forEach((p, i) => tSplit[i % 3].push(p));
+    tSplit.forEach((arr, i) => instModel(TRASH_MODELS[i], arr));
+    // 后巷：井盖 ≥12 / 铁门 ≥6 / 老鼠 ≥15
+    const manholes = [], gates = [], rats = [];
+    const usedA = [];
+    for (const a of alleySpots) {
+      if (manholes.length < 14 && !usedA.some(u => Math.hypot(u.x - a.x, u.z - a.z) < 20)) {
+        manholes.push({ x: a.x, y: a.y + 0.03, z: a.z, ry: S() * 6.28, s: 1 });
+      }
+      if (gates.length < 8 && S() < 0.5 && !usedA.some(u => Math.hypot(u.x - a.x, u.z - a.z) < 30)) {
+        const gx = a.x - Math.sin(a.ry) * a.len * 0.3, gz = a.z - Math.cos(a.ry) * a.len * 0.3;
+        gates.push({ x: gx, y: a.y, z: gz, ry: a.ry, s: 1.25 });
+      }
+      if (rats.length < 16 && S() < 0.75) {
+        rats.push({ x: a.x + (S() - 0.5) * 2, y: a.y + 0.02, z: a.z + (S() - 0.5) * 2, ry: S() * 6.28, s: 0.9 + S() * 0.3 });
+      }
+      usedA.push({ x: a.x, z: a.z });
+    }
+    // 老鼠兜底（后巷不足 16 只时重复取用）
+    for (let i = 0; alleySpots.length && rats.length < 16 && i < alleySpots.length * 2; i++) {
+      const a = alleySpots[i % alleySpots.length];
+      rats.push({ x: a.x + (S() - 0.5) * 3, y: a.y + 0.02, z: a.z + (S() - 0.5) * 3, ry: S() * 6.28, s: 0.9 + S() * 0.3 });
+    }
+    instModel('ph2_water_manhole_cover', manholes);
+    instModel('ph2_large_iron_gate', gates);
+    instModel('ph2_street_rat', rats);
+    // 长椅 ≥30（广场/公园边/车站）+ 篮子 ≥20（市场周边）+ 灌木 25 + 屋顶水箱 8
+    const benchA = [], benchB = [], basketsA = [], basketsB = [], bushes = [], towers = [];
+    if (valid.length) {
+      let bg = 0;
+      while (benchA.length + benchB.length < 32 && bg++ < 600) {
+        const e = roadEdges[valid[(S() * valid.length) | 0]];
+        const a = roadNodes[e.a], b = roadNodes[e.b];
+        const mx = (a.x + b.x) / 2, mz = (a.z + b.z) / 2;
+        const nearPlaza = Math.hypot(mx - POS.VILLAGE.x, mz - POS.VILLAGE.z) < 55
+          || Math.hypot(mx - POS.STATION.x, mz - POS.STATION.z) < 55
+          || Math.hypot(mx - POS.FLOWER.x, mz - POS.FLOWER.z) < 75
+          || S() < 0.15;
+        if (!nearPlaza) continue;
+        const t = 0.3 + S() * 0.4, side = S() < 0.5 ? 1 : -1;
+        const off = e.width / 2 + 1.1;
+        const x = a.x + (b.x - a.x) * t - e.dz * off * side;
+        const z = a.z + (b.z - a.z) * t + e.dx * off * side;
+        if (!clearSpot(x, z) || hitsAnyBox(x, z, 0.4)) continue;
+        const spot = { x, y: World.height(x, z), z, ry: Math.atan2(e.dz * side, -e.dx * side), s: 1 };
+        ((benchA.length + benchB.length) % 2 ? benchA : benchB).push(spot);
+      }
+    }
+    let kg = 0;
+    while (basketsA.length + basketsB.length < 22 && kg++ < 300) {
+      const x = POS.VILLAGE.x + (S() - 0.5) * 44, z = POS.VILLAGE.z + (S() - 0.5) * 40;
+      const y = World.height(x, z);
+      if (y < 2 || y > 30) continue;
+      const spot = { x, y, z, ry: S() * 6.28, s: 0.9 + S() * 0.25 };
+      ((basketsA.length + basketsB.length) % 2 ? basketsA : basketsB).push(spot);
+    }
+    if (valid.length) {
+      let sg = 0;
+      while (bushes.length < 25 && sg++ < 400) {
+        const e = roadEdges[valid[(S() * valid.length) | 0]];
+        const a = roadNodes[e.a], b = roadNodes[e.b];
+        const t = S(), side = S() < 0.5 ? 1 : -1;
+        const off = e.width / 2 + 1.6;
+        const x = a.x + (b.x - a.x) * t - e.dz * off * side;
+        const z = a.z + (b.z - a.z) * t + e.dx * off * side;
+        if (!clearSpot(x, z) || hitsAnyBox(x, z, 0.3)) continue;
+        bushes.push({ x, y: World.height(x, z), z, ry: S() * 6.28, s: 0.8 + S() * 0.5 });
+      }
+    }
+    const tall = F.filter(m => m.collidable && m.h > 15);
+    for (let i = 0; i < tall.length && towers.length < 8; i += Math.max(1, (tall.length / 8) | 0)) {
+      const m = tall[i];
+      towers.push({ x: m.x, y: m.base + m.h, z: m.z, ry: 0, s: 1 });
+    }
+    instModel('ph2_painted_wooden_bench', benchA);
+    instModel('kk_cb_bench', benchB);
+    instModel('ph2_wicker_basket_01', basketsA);
+    instModel('ph2_wicker_basket_02', basketsB);
+    instModel('kk_cb_bush', bushes);
+    instModel('kk_cb_watertower', towers);
+    // 广场雕塑 ×3
+    placeModel('ph2_gothic_statue', 195, World.height(195, 232), 232, Math.PI, 1);        // VILLAGE 广场
+    placeModel('ph2_gothic_statue', 192, World.height(192, -110), -110, 0.4, 1);          // SHRINE 前庭
+    placeModel('ph2_concrete_cat_statue', -66, World.height(-66, -104), -104, 2.2, 1.2);  // 公园小径
+  }
+
+  /* ================= 市民 ×4（6 型 InstancedMesh + 24 近身独立池） ================= */
   const citizens = [];
-  const citIM = [];      // 4 个 InstancedMesh
-  const soloPool = [];   // 16 个独立 Group（每组含 4 变体 mesh）
+  const citIM = [];      // 6 个 InstancedMesh
+  const soloPool = [];   // 24 个独立 Group（每组含 6 型 mesh）
   let soloGeos = null;
+  const N_VARIANTS = 6;
+  // 男女老幼巡警 ≈ 4:3:1:1:1（男=圆顶/报童帽，老=礼帽，幼=少年）
+  const VW = [2, 2, 1, 3, 1, 1];
+  function pickVariant() {
+    let r = S() * 10;
+    for (let v = 0; v < N_VARIANTS; v++) { r -= VW[v]; if (r <= 0) return v; }
+    return 0;
+  }
   function buildCitizens() {
     const valid = roadEdges.map((e, i) => e.valid ? i : -1).filter(i => i >= 0);
     if (!valid.length) return;
-    soloGeos = [0, 1, 2, 3].map(v => Characters.citizenGeometry(v));
-    const perVariant = [[], [], [], []];
-    const N = 76;
+    soloGeos = [];
+    for (let v = 0; v < N_VARIANTS; v++) soloGeos.push(Characters.citizenGeometry(v));
+    const perVariant = [];
+    for (let v = 0; v < N_VARIANTS; v++) perVariant.push([]);
+    const N = 300;
     for (let i = 0; i < N; i++) {
       const ei = valid[(S() * valid.length) | 0];
-      const c = { edge: ei, s: S() * roadEdges[ei].len, spd: 0.8 + S() * 0.9, dir: S() < 0.5 ? 1 : -1, variant: i % 4, vi: 0, solo: null, phase: S() * 6.28, x: 0, z: 0, y: 0, ry: 0 };
-      c.vi = perVariant[c.variant].length;
-      perVariant[c.variant].push(c);
+      const variant = pickVariant();
+      const c = { edge: ei, s: S() * roadEdges[ei].len, spd: 0.8 + S() * 0.9, dir: S() < 0.5 ? 1 : -1, variant, vi: 0, solo: null, phase: S() * 6.28, x: 0, z: 0, y: 0, ry: 0 };
+      c.vi = perVariant[variant].length;
+      perVariant[variant].push(c);
       citizens.push(c);
     }
     const mat = Characters.personMat();
-    for (let v = 0; v < 4; v++) {
+    for (let v = 0; v < N_VARIANTS; v++) {
       const arr = perVariant[v];
-      const im = new THREE.InstancedMesh(soloGeos[v], mat, arr.length);
+      const im = new THREE.InstancedMesh(soloGeos[v], mat, Math.max(1, arr.length));
       im.frustumCulled = false;
       im.castShadow = false;
       scene.add(im);
       citIM[v] = im;
     }
-    // 独立池（近玩家 ≤20m 切换：撑伞倾斜/避让/回头）
-    for (let i = 0; i < 16; i++) {
+    // 独立池 24（近玩家 ≤20m 切换：撑伞倾斜/避让/回头）
+    for (let i = 0; i < 24; i++) {
       const g = new THREE.Group();
       g.visible = false;
       const meshes = [];
-      for (let v = 0; v < 4; v++) {
+      for (let v = 0; v < N_VARIANTS; v++) {
         const m = new THREE.Mesh(soloGeos[v], mat);
         m.visible = false;
         g.add(m);
@@ -1263,7 +1792,7 @@ const City = (() => {
       const e = roadEdges[c.edge];
       let spd = c.spd;
       // 独立模式：6m 内减速避让
-      let avoidX = 0, avoidZ = 0, look = 0;
+      let avoidX = 0, avoidZ = 0;
       const ddx = px - c.x, ddz = pz - c.z;
       const dist = Math.hypot(ddx, ddz);
       if (c.solo !== null && dist < 6) {
@@ -1319,70 +1848,130 @@ const City = (() => {
         citIM[c.variant].setMatrixAt(c.vi, _d.matrix);
       }
     }
-    for (let v = 0; v < 4; v++) if (citIM[v]) citIM[v].instanceMatrix.needsUpdate = true;
+    for (let v = 0; v < N_VARIANTS; v++) if (citIM[v]) citIM[v].instanceMatrix.needsUpdate = true;
   }
 
-  /* ================= 马车（12 汉萨姆 + 4 双层公共马车） ================= */
+  /* ================= 马车 ×2.5（22 汉萨姆 + 10 双层公共马车 + 8 货运大车） ================= */
   const carriageState = [];
-  let imHansom, imHansomWh, imOmni, imOmniWhF, imOmniWhR, carriageLamps = null;
+  let imHan, imHanWh, imHanLA, imHanLB;
+  let imOm, imOmWhF, imOmWhR, imOmLA, imOmLB;
+  let imFr, imFrWhF, imFrWhR, imFrLA, imFrLB;
+  let carriageLamps = null;
+  const N_HAN = 22, N_OM = 10, N_FR = 8;
   function wheelGeo(r, w) {
-    const g = new THREE.CylinderGeometry(r, r, w, 10);
-    g.rotateZ(Math.PI / 2); // 轴沿本地 x
-    return g;
+    const b = new Builder();
+    const tire = LC(0x141210), hub = LC(0x2c2620);
+    b.cyl(r, r, w, 12, 0, 0, 0, tire, 'x');          // 轮辋
+    b.cyl(0.1, 0.1, w + 0.08, 8, 0, 0, 0, hub, 'x');  // 轮毂
+    b.box(w * 0.5, 2 * r * 0.9, 0.05, 0, 0, 0, 0, hub); // 辐条（竖）
+    b.box(w * 0.5, 0.05, 2 * r * 0.9, 0, 0, 0, 0, hub); // 辐条（横）
+    return b.geometry();
+  }
+  // 马（头/颈/身/尾/鬃/耳/挽具 12+ 部件），z0 = 身位
+  function horseBody(b, col, sx, z0, big) {
+    const k = big ? 1.12 : 1;
+    b.box(0.5 * k, 0.55 * k, 1.5 * k, sx, 0.95 * k, z0, 0, col);            // 身
+    b.box(0.3 * k, 0.55 * k, 0.35 * k, sx, 1.35 * k, z0 + 0.75 * k, -0.5, col); // 颈
+    b.box(0.26 * k, 0.3 * k, 0.4 * k, sx, 1.55 * k, z0 + 1.02 * k, -0.4, col);  // 头
+    b.box(0.14 * k, 0.12 * k, 0.22 * k, sx, 1.5 * k, z0 + 1.24 * k, -0.4, col); // 吻
+    for (const ex of [-0.07, 0.07]) b.box(0.05, 0.1, 0.05, sx + ex * k, 1.72 * k, z0 + 0.98 * k, 0, col); // 耳
+    b.box(0.06 * k, 0.3 * k, 0.5 * k, sx, 1.6 * k, z0 + 0.62 * k, -0.5, LC(0x0e0c0a)); // 鬃
+    b.box(0.08 * k, 0.4 * k, 0.1 * k, sx, 1.0 * k, z0 - 0.82 * k, 0.6, col);  // 尾
+    b.box(0.56 * k, 0.08, 0.1, sx, 1.24 * k, z0 - 0.1, 0, LC(0x241c14));      // 鞍带
+    b.box(0.06, 0.06, 1.6, sx - 0.3 * k, 0.8, z0 - 0.85, 0, LC(0x241c14));    // 挽杆
+    b.box(0.06, 0.06, 1.6, sx + 0.3 * k, 0.8, z0 - 0.85, 0, LC(0x241c14));
+  }
+  // 四腿（两帧慢跑姿态：前后腿交替前后摆）
+  function horseLegs(b, col, sx, z0, big, pose) {
+    const k = big ? 1.12 : 1;
+    const sw = pose ? 0.16 : -0.16;
+    for (const [lx, lz, ph] of [[-0.16, 0.55, 1], [0.16, 0.55, -1], [-0.16, -0.5, -1], [0.16, -0.5, 1]]) {
+      const off = sw * ph;
+      b.box(0.11, 0.5, 0.11, sx + lx * k, 0.62 * k, z0 + lz * k + off * 0.4, 0, col); // 上腿
+      b.box(0.09, 0.5, 0.09, sx + lx * k, 0.22 * k, z0 + lz * k + off, 0, col);       // 下腿
+      b.box(0.11, 0.07, 0.13, sx + lx * k, 0.02, z0 + lz * k + off * 1.1, 0, LC(0x0c0a08)); // 蹄
+    }
   }
   function buildCarriages() {
     if (!carriageLoops.length) return;
-    // 车身合并几何（顶点色）
+    const horse = LC(0x171310), cabin = LC(0x101018), brass = LC(0x8a6a2a), glass = LC(0x33404e), wood = LC(0x3c2c1a);
+    // —— 汉萨姆小马车（单马双轮） ——
     const hB = new Builder();
-    const horse = LC(0x171310), cabin = LC(0x101018), brass = LC(0x8a6a2a);
-    // 马（低模盒）
-    hB.box(0.5, 0.55, 1.5, 0, 0.95, 1.7, 0, horse);
-    hB.box(0.3, 0.55, 0.35, 0, 1.35, 2.45, -0.5, horse);
-    for (const [sx, sz] of [[-0.16, 1.15], [0.16, 1.15], [-0.16, 2.2], [0.16, 2.2]]) hB.box(0.12, 0.9, 0.12, sx, 0.45, sz, 0, horse);
-    hB.box(0.06, 0.06, 1.6, -0.38, 0.8, 0.85, 0, horse);
-    hB.box(0.06, 0.06, 1.6, 0.38, 0.8, 0.85, 0, horse);
-    // 双轮车厢
-    hB.box(1.5, 1.5, 1.8, 0, 1.15, -0.9, 0, cabin);
-    hB.box(1.6, 0.18, 1.9, 0, 1.98, -0.9, 0, cabin);
-    hB.box(1.4, 0.35, 0.5, 0, 1.55, 0.15, 0, cabin); // 车夫座
-    hB.box(1.56, 0.08, 1.86, 0, 1.35, -0.9, 0, brass);
+    horseBody(hB, horse, 0, 1.7, false);
+    hB.box(1.5, 1.5, 1.8, 0, 1.15, -0.9, 0, cabin);           // 车厢
+    hB.box(1.6, 0.18, 1.9, 0, 1.98, -0.9, 0, cabin);          // 顶
+    hB.box(1.4, 0.35, 0.5, 0, 1.55, 0.15, 0, cabin);          // 车夫座
+    hB.box(1.56, 0.08, 1.86, 0, 1.35, -0.9, 0, brass);        // 铜腰线
+    for (const sx of [-1, 1]) hB.box(0.06, 0.55, 0.7, sx * 0.78, 1.45, -0.9, 0, glass); // 车窗
+    for (const sx of [-1, 1]) hB.cyl(0.07, 0.1, 0.18, 6, sx * 0.72, 1.5, 0.05, brass);  // 车灯
     const hansomGeo = hB.geometry();
+    const hLA = new Builder(); horseLegs(hLA, horse, 0, 1.7, false, 0);
+    const hLB = new Builder(); horseLegs(hLB, horse, 0, 1.7, false, 1);
+    // —— 双层公共马车（双马四轮） ——
     const oB = new Builder();
-    // 双层公共马车：更大车厢 + 上层座位
-    oB.box(0.5, 0.55, 1.5, -0.55, 0.95, 2.2, 0, horse);
-    oB.box(0.5, 0.55, 1.5, 0.55, 0.95, 2.2, 0, horse);
-    oB.box(0.3, 0.55, 0.35, -0.55, 1.35, 2.95, -0.5, horse);
-    oB.box(0.3, 0.55, 0.35, 0.55, 1.35, 2.95, -0.5, horse);
-    for (const sx of [-0.55, 0.55]) for (const sz of [1.7, 2.75]) {
-      oB.box(0.12, 0.9, 0.12, sx - 0.14, 0.45, sz, 0, horse);
-      oB.box(0.12, 0.9, 0.12, sx + 0.14, 0.45, sz, 0, horse);
-    }
+    horseBody(oB, horse, -0.55, 2.2, false);
+    horseBody(oB, horse, 0.55, 2.2, false);
     oB.box(2.0, 1.6, 3.6, 0, 1.3, -0.6, 0, cabin);
     oB.box(2.0, 0.16, 3.6, 0, 2.2, -0.6, 0, brass);
-    oB.box(1.9, 0.25, 3.3, 0, 2.5, -0.6, 0, LC(0x2a2018)); // 上层座位
+    oB.box(1.9, 0.25, 3.3, 0, 2.5, -0.6, 0, LC(0x2a2018));    // 上层座位
     for (const sx of [-1, 1]) oB.box(0.1, 0.8, 3.3, sx * 0.95, 2.7, -0.6, 0, cabin);
     oB.box(2.0, 0.14, 3.4, 0, 3.1, -0.6, 0, cabin);
+    for (const sx of [-1, 1]) for (let i = 0; i < 4; i++) oB.box(0.06, 0.5, 0.5, sx * 1.01, 1.5, -1.9 + i * 0.85, 0, glass); // 车窗排
+    for (const sx of [-1, 1]) oB.cyl(0.08, 0.11, 0.2, 6, sx * 0.9, 1.6, 1.25, brass); // 车灯
     const omniGeo = oB.geometry();
+    const oLA = new Builder(); horseLegs(oLA, horse, -0.55, 2.2, false, 0); horseLegs(oLA, horse, 0.55, 2.2, false, 1);
+    const oLB = new Builder(); horseLegs(oLB, horse, -0.55, 2.2, false, 1); horseLegs(oLB, horse, 0.55, 2.2, false, 0);
+    // —— 货运大车（壮马 + 敞口货厢） ——
+    const fB = new Builder();
+    horseBody(fB, horse, 0, 2.0, true);
+    fB.box(1.9, 0.3, 3.2, 0, 0.85, -0.7, 0, wood);           // 车板
+    for (const sx of [-1, 1]) fB.box(0.12, 0.7, 3.2, sx * 0.9, 1.2, -0.7, 0, wood); // 栏板
+    fB.box(1.9, 0.7, 0.12, 0, 1.2, 0.85, 0, wood);            // 前挡
+    for (let i = 0; i < 4; i++) { // 货箱堆
+      fB.box(0.7, 0.55, 0.7, -0.45 + (i % 2) * 0.9, 1.45 + (i > 1 ? 0.55 : 0), -1.5 + (i % 2) * 0.5, 0.1 * i, LC(0x4a3a26));
+    }
+    fB.box(1.2, 0.35, 0.5, 0, 1.35, 0.9, 0, cabin);           // 车夫座
+    for (const sx of [-1, 1]) fB.cyl(0.07, 0.1, 0.18, 6, sx * 0.85, 1.35, 1.0, brass); // 车灯
+    const freightGeo = fB.geometry();
+    const fLA = new Builder(); horseLegs(fLA, horse, 0, 2.0, true, 0);
+    const fLB = new Builder(); horseLegs(fLB, horse, 0, 2.0, true, 1);
     const bodyMat = new THREE.MeshPhongMaterial({ vertexColors: true, shininess: 40, specular: new THREE.Color(0x3a4150) });
-    const wheelMat = new THREE.MeshPhongMaterial({ color: LC(0x141210), shininess: 30 });
-    imHansom = new THREE.InstancedMesh(hansomGeo, bodyMat, 12);
-    imHansomWh = new THREE.InstancedMesh(wheelGeo(0.75, 0.1), wheelMat, 12);
-    imOmni = new THREE.InstancedMesh(omniGeo, bodyMat, 4);
-    imOmniWhF = new THREE.InstancedMesh(wheelGeo(0.55, 0.1), wheelMat, 4);
-    imOmniWhR = new THREE.InstancedMesh(wheelGeo(0.8, 0.1), wheelMat, 4);
-    for (const im of [imHansom, imHansomWh, imOmni, imOmniWhF, imOmniWhR]) { im.frustumCulled = false; scene.add(im); }
+    const wheelMat = new THREE.MeshPhongMaterial({ vertexColors: true, shininess: 30 });
+    imHan = new THREE.InstancedMesh(hansomGeo, bodyMat, N_HAN);
+    imHanWh = new THREE.InstancedMesh(wheelGeo(0.75, 0.1), wheelMat, N_HAN);
+    imHanLA = new THREE.InstancedMesh(hLA.geometry(), bodyMat, N_HAN);
+    imHanLB = new THREE.InstancedMesh(hLB.geometry(), bodyMat, N_HAN);
+    imOm = new THREE.InstancedMesh(omniGeo, bodyMat, N_OM);
+    imOmWhF = new THREE.InstancedMesh(wheelGeo(0.55, 0.1), wheelMat, N_OM);
+    imOmWhR = new THREE.InstancedMesh(wheelGeo(0.8, 0.1), wheelMat, N_OM);
+    imOmLA = new THREE.InstancedMesh(oLA.geometry(), bodyMat, N_OM);
+    imOmLB = new THREE.InstancedMesh(oLB.geometry(), bodyMat, N_OM);
+    imFr = new THREE.InstancedMesh(freightGeo, bodyMat, N_FR);
+    imFrWhF = new THREE.InstancedMesh(wheelGeo(0.6, 0.1), wheelMat, N_FR);
+    imFrWhR = new THREE.InstancedMesh(wheelGeo(0.85, 0.1), wheelMat, N_FR);
+    imFrLA = new THREE.InstancedMesh(fLA.geometry(), bodyMat, N_FR);
+    imFrLB = new THREE.InstancedMesh(fLB.geometry(), bodyMat, N_FR);
+    for (const im of [imHan, imHanWh, imHanLA, imHanLB, imOm, imOmWhF, imOmWhR, imOmLA, imOmLB, imFr, imFrWhF, imFrWhR, imFrLA, imFrLB]) {
+      im.frustumCulled = false; scene.add(im);
+    }
     // 状态
-    for (let i = 0; i < 16; i++) {
+    const kinds = [];
+    for (let i = 0; i < N_HAN; i++) kinds.push(0);
+    for (let i = 0; i < N_OM; i++) kinds.push(1);
+    for (let i = 0; i < N_FR; i++) kinds.push(2);
+    for (let i = 0; i < kinds.length; i++) {
       const loop = carriageLoops[i % carriageLoops.length];
+      const kind = kinds[i];
       const cs = {
         loop, seg: (S() * loop.length) | 0, dist: S() * 20, spd: 2.4 + S() * 1.3,
-        kind: i < 12 ? 0 : 1, idx: i < 12 ? i : i - 12, ry: 0, spin: 0, x: 0, z: 0, y: 0,
+        kind, idx: kind === 0 ? i : kind === 1 ? i - N_HAN : i - N_HAN - N_OM,
+        ry: 0, spin: 0, x: 0, z: 0, y: 0,
       };
       carriageState.push(cs);
       carriages.push({ x: 0, z: 0, ry: 0 });
     }
     // 车灯（小暖光点，共享 Points）
-    const lp = new Float32Array(16 * 3);
+    const lp = new Float32Array(kinds.length * 3);
     const lg = new THREE.BufferGeometry();
     lg.setAttribute('position', new THREE.BufferAttribute(lp, 3));
     carriageLamps = new THREE.Points(lg, new THREE.PointsMaterial({
@@ -1391,13 +1980,19 @@ const City = (() => {
     }));
     carriageLamps.frustumCulled = false;
     scene.add(carriageLamps);
-    stats.carriages = 16;
+    stats.carriages = kinds.length;
   }
   const _m1 = new THREE.Matrix4(), _m2 = new THREE.Matrix4(), _m3 = new THREE.Matrix4();
   const _q = new THREE.Quaternion(), _e = new THREE.Euler();
-  const _cp = new THREE.Vector3(), _cs = new THREE.Vector3(1, 1, 1);
-  const OMNI_AXLES = [[0, 0.55, 0.8], [1, 0.8, -1.6]]; // [前后轴索引, 轴高, 轴 z]
+  const _cp = new THREE.Vector3(), _cs = new THREE.Vector3(1, 1, 1), _cz = new THREE.Vector3(0, 0, 0);
+  // [车身, 腿A, 腿B] × kind；轴：[[前轮IM, 轴高, 轴z], ...]
+  const CARR = () => [
+    { body: imHan, la: imHanLA, lb: imHanLB, wh: [[imHanWh, 0.75, -0.9]], lampZ: 2.6 },
+    { body: imOm, la: imOmLA, lb: imOmLB, wh: [[imOmWhF, 0.55, 0.8], [imOmWhR, 0.8, -1.6]], lampZ: 3.4 },
+    { body: imFr, la: imFrLA, lb: imFrLB, wh: [[imFrWhF, 0.6, 0.9], [imFrWhR, 0.85, -1.8]], lampZ: 3.0 },
+  ];
   function updateCarriages(dt, px, pz) {
+    const CF = CARR();
     for (let i = 0; i < carriageState.length; i++) {
       const c = carriageState[i];
       const loop = c.loop;
@@ -1422,35 +2017,31 @@ const City = (() => {
       while (d2 < -Math.PI) d2 += Math.PI * 2;
       c.ry += d2 * Math.min(1, dt * 2.2);
       c.spin += c.spd * dt / 0.7;
-      // 车身矩阵
+      // 车身矩阵（随步态轻微起伏）
       _e.set(0, c.ry, 0); _q.setFromEuler(_e);
-      _cp.set(c.x, c.y, c.z);
+      _cp.set(c.x, c.y + Math.abs(Math.sin(c.spin)) * 0.04, c.z);
       _m1.compose(_cp, _q, _cs);
-      const lampZ = c.kind === 0 ? 2.6 : 3.4;
-      if (c.kind === 0) {
-        imHansom.setMatrixAt(c.idx, _m1);
-        // 单轴双轮：绕轴心线 (y=0.75, z=-0.9) 旋转
-        _m2.makeTranslation(0, 0.75, -0.9);
+      const cf = CF[c.kind];
+      cf.body.setMatrixAt(c.idx, _m1);
+      // 两帧慢跑腿交替（缩放 0 隐藏另一帧）
+      const aOn = Math.sin(c.spin) > 0;
+      _m2.compose(_cp, _q, aOn ? _cs : _cz);
+      cf.la.setMatrixAt(c.idx, _m2);
+      _m2.compose(_cp, _q, aOn ? _cz : _cs);
+      cf.lb.setMatrixAt(c.idx, _m2);
+      // 车轮绕轴旋转
+      for (const w of cf.wh) {
+        _m2.makeTranslation(0, w[1], w[2]);
         _m2.premultiply(_m1);
         _m3.makeRotationX(c.spin);
         _m2.multiply(_m3);
-        imHansomWh.setMatrixAt(c.idx, _m2);
-      } else {
-        imOmni.setMatrixAt(c.idx, _m1);
-        for (const a of OMNI_AXLES) {
-          const im = a[0] === 0 ? imOmniWhF : imOmniWhR;
-          _m2.makeTranslation(0, a[1], a[2]);
-          _m2.premultiply(_m1);
-          _m3.makeRotationX(c.spin);
-          _m2.multiply(_m3);
-          im.setMatrixAt(c.idx, _m2);
-        }
+        w[0].setMatrixAt(c.idx, _m2);
       }
       // 暴露给小地图
       carriages[i].x = c.x; carriages[i].z = c.z; carriages[i].ry = c.ry;
       // 车灯
       const attr = carriageLamps.geometry.attributes.position;
-      attr.setXYZ(i, c.x + Math.sin(c.ry) * lampZ, c.y + 1.6, c.z + Math.cos(c.ry) * lampZ);
+      attr.setXYZ(i, c.x + Math.sin(c.ry) * cf.lampZ, c.y + 1.6, c.z + Math.cos(c.ry) * cf.lampZ);
       // 车过积水偶发涟漪（节流）
       c._rip = (c._rip || 0) - dt;
       if (c._rip <= 0) {
@@ -1460,19 +2051,24 @@ const City = (() => {
         }
       }
     }
-    for (const im of [imHansom, imHansomWh, imOmni, imOmniWhF, imOmniWhR]) im.instanceMatrix.needsUpdate = true;
+    for (const cf of CF) {
+      cf.body.instanceMatrix.needsUpdate = true;
+      cf.la.instanceMatrix.needsUpdate = true;
+      cf.lb.instanceMatrix.needsUpdate = true;
+      for (const w of cf.wh) w[0].instanceMatrix.needsUpdate = true;
+    }
     carriageLamps.geometry.attributes.position.needsUpdate = true;
   }
 
-  /* ================= 屋顶生机：烟囱蒸汽 / 鸽群 / 巡警灯笼 ================= */
+  /* ================= 屋顶生机：烟囱蒸汽 ×2 / 鸽群 8 / 巡警灯笼 6 ================= */
   let steamPts = null; const steamData = [];
-  const pigeons = [];
+  let pigeonIM = null; const pigeons = [];
   let policePts = null; const policeData = [];
   function buildRoofLife() {
-    // 烟囱（合批小盒）
+    // 烟囱（合批小盒，密度 ×2）
     const chimneys = [];
     for (const m of F) {
-      if (!m.collidable || S() > 0.5 || chimneys.length >= 30) continue;
+      if (!m.collidable || S() > 0.5 || chimneys.length >= 60) continue;
       const tx = m.nz, tz = -m.nx;
       const off = (S() - 0.5) * m.w * 0.5;
       chimneys.push({
@@ -1505,7 +2101,7 @@ const City = (() => {
         steamData.push({ x: c.x, z: c.z, y0: c.y + 1.7, t: S(), spd: 0.12 + S() * 0.1 });
       }
     }
-    // 鸽群（3 群，每群 5 只三角片绕圈）
+    // 鸽群 8 组（每组 5 只三角片，合批为 1 个 InstancedMesh）
     const pGeoB = new Builder();
     const dark = LC(0x101218);
     for (let i = 0; i < 5; i++) {
@@ -1514,18 +2110,17 @@ const City = (() => {
       pGeoB.tri([bx, by, bz + 0.5], [bx - 0.9, by + 0.25, bz], [bx + 0.9, by + 0.25, bz], dark);
       pGeoB.tri([bx, by, bz + 0.5], [bx - 0.9, by - 0.1, bz], [bx + 0.9, by - 0.1, bz], dark);
     }
-    const pGeo = pGeoB.geometry();
     const pMat = new THREE.MeshBasicMaterial({ vertexColors: true, side: THREE.DoubleSide });
-    const centers = [[160, 235], [85, 145], [195, -100]];
+    pigeonIM = new THREE.InstancedMesh(pGeoB.geometry(), pMat, 8);
+    pigeonIM.frustumCulled = false;
+    scene.add(pigeonIM);
+    const centers = [[160, 235], [85, 145], [195, -100], [195, 245], [20, 240], [140, -45], [250, -80], [176, -90]];
     for (const cc of centers) {
-      const m = new THREE.Mesh(pGeo, pMat);
-      m.position.set(cc[0], World.height(cc[0], cc[1]) + 20, cc[1]);
-      scene.add(m);
-      pigeons.push({ mesh: m, cx: cc[0], cz: cc[1], y: m.position.y, r: 14 + S() * 6, a: S() * 6.28, spd: 0.3 + S() * 0.2 });
+      pigeons.push({ cx: cc[0], cz: cc[1], y: World.height(cc[0], cc[1]) + 20, r: 14 + S() * 6, a: S() * 6.28, spd: 0.3 + S() * 0.2 });
     }
-    // 巡警灯笼（2~3 个沿街缓动暖光点）
+    // 巡警灯笼 ×6（沿街缓动暖光点）
     const valid = roadEdges.map((e, i) => e.valid && e.len > 16 ? i : -1).filter(i => i >= 0);
-    const pp = new Float32Array(3 * 3);
+    const pp = new Float32Array(6 * 3);
     const pg = new THREE.BufferGeometry();
     pg.setAttribute('position', new THREE.BufferAttribute(pp, 3));
     policePts = new THREE.Points(pg, new THREE.PointsMaterial({
@@ -1533,10 +2128,11 @@ const City = (() => {
     }));
     policePts.frustumCulled = false;
     scene.add(policePts);
-    for (let i = 0; i < 3 && valid.length; i++) {
+    for (let i = 0; i < 6 && valid.length; i++) {
       policeData.push({ edge: valid[(S() * valid.length) | 0], s: S() * 10, spd: 0.5 + S() * 0.4, dir: 1 });
     }
   }
+  const _pgD = new THREE.Object3D();
   function updateRoofLife(dt, now) {
     // 蒸汽上飘
     if (steamPts) {
@@ -1550,11 +2146,18 @@ const City = (() => {
       }
       attr.needsUpdate = true;
     }
-    // 鸽群绕圈
-    for (const p of pigeons) {
-      p.a += dt * p.spd;
-      p.mesh.position.set(p.cx + Math.cos(p.a) * p.r, p.y + Math.sin(p.a * 2) * 2.5, p.cz + Math.sin(p.a) * p.r);
-      p.mesh.rotation.y = -p.a + Math.PI / 2;
+    // 鸽群绕圈（合批矩阵更新）
+    if (pigeonIM) {
+      for (let i = 0; i < pigeons.length; i++) {
+        const p = pigeons[i];
+        p.a += dt * p.spd;
+        _pgD.position.set(p.cx + Math.cos(p.a) * p.r, p.y + Math.sin(p.a * 2) * 2.5, p.cz + Math.sin(p.a) * p.r);
+        _pgD.rotation.set(0, -p.a + Math.PI / 2, 0);
+        _pgD.scale.set(1, 1, 1);
+        _pgD.updateMatrix();
+        pigeonIM.setMatrixAt(i, _pgD.matrix);
+      }
+      pigeonIM.instanceMatrix.needsUpdate = true;
     }
     // 巡警灯笼沿街缓动
     if (policePts) {
@@ -1575,7 +2178,7 @@ const City = (() => {
     }
   }
 
-  /* ================= 泰晤士：驳船 / 渡轮 / 码头吊机 ================= */
+  /* ================= 泰晤士：驳船 / 渡轮 ================= */
   const boats = [];
   function buildRiver() {
     const hullC = LC(0x2a221a), cargoC = LC(0x3c3022), cabC = LC(0x221c16);
@@ -1599,22 +2202,6 @@ const City = (() => {
     for (const d of defs) {
       const mesh = boat(d.ferry);
       boats.push({ mesh, t: d.t, spd: d.spd, dir: 1 });
-    }
-    // DOCKS 码头吊机 ×2（木/铁桁架 + 吊钩）
-    const iron = LC(0x23282e), wood = LC(0x3a2c1c);
-    for (const [jx, jz, ry] of [[258, -74, 0.6], [240, -98, -0.8]]) {
-      const jb = World.height(jx, jz);
-      if (jb < 1.5) continue;
-      staticB.box(0.5, 12, 0.5, jx - 2, jb + 6, jz, 0, wood);
-      staticB.box(0.5, 12, 0.5, jx + 2, jb + 6, jz, 0, wood);
-      staticB.box(5.4, 0.5, 0.5, jx, jb + 12, jz, 0, wood);
-      // 桁架斜撑
-      staticB.box(0.3, 6.5, 0.3, jx, jb + 9, jz, 0.6, iron);
-      // 吊臂 + 吊钩
-      const ax = Math.cos(ry), az = Math.sin(ry);
-      staticB.box(0.4, 0.4, 9, jx + ax * 4.5, jb + 11.6, jz + az * 4.5, -ry, wood);
-      staticB.box(0.08, 4, 0.08, jx + ax * 8.5, jb + 9.4, jz + az * 8.5, 0, iron);
-      staticB.box(0.4, 0.5, 0.4, jx + ax * 8.5, jb + 7.2, jz + az * 8.5, 0, iron);
     }
   }
   function updateBoats(dt, now) {
@@ -1655,6 +2242,7 @@ const City = (() => {
     const dm = new THREE.Object3D();
     function inst(geo, mat, arr, yOff) {
       if (!arr.length) return;
+      stats.props += arr.length;
       const im = new THREE.InstancedMesh(geo, mat, arr.length);
       arr.forEach((p, i) => {
         dm.position.set(p.x, p.y + yOff, p.z);
@@ -1671,65 +2259,7 @@ const City = (() => {
     inst(paperGeo, new THREE.MeshPhongMaterial({ color: LC(0x9a958a), shininess: 6, side: THREE.DoubleSide }), papers, 0.05);
   }
 
-  /* ================= 立面合批构建 ================= */
-  function buildFacadeMeshes() {
-    for (const m of F) (perType[m.type] || (perType[m.type] = [])).push(m);
-    const dm = new THREE.Object3D();
-    for (const k of TYPE_KEYS) {
-      const arr = (perType[k] || []).filter(m => !m.enterable);
-      if (!arr.length) continue;
-      const T = TYPES[k];
-      const wIM = new THREE.InstancedMesh(unitGeos[k].wall, matFacade, arr.length);
-      const rIM = new THREE.InstancedMesh(unitGeos[k].roof, matFacade, arr.length);
-      arr.forEach((m, i) => {
-        dm.position.set(m.x, m.base - 0.35, m.z);
-        dm.rotation.set(0, m.ry, 0);
-        dm.scale.set(m.w, m.h + 0.35, m.d);
-        dm.updateMatrix();
-        wIM.setMatrixAt(i, dm.matrix);
-        dm.position.set(m.x, m.base + m.h, m.z);
-        dm.scale.set(m.w, T.rh, m.d);
-        dm.updateMatrix();
-        rIM.setMatrixAt(i, dm.matrix);
-      });
-      for (const im of [wIM, rIM]) { im.instanceMatrix.needsUpdate = true; im.frustumCulled = false; im.receiveShadow = true; scene.add(im); }
-    }
-    // 墙根 1m 雨浸暗带（全部建筑合批一条）
-    const all = F;
-    const skirt = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), matSkirt, all.length);
-    all.forEach((m, i) => {
-      dm.position.set(m.x, m.base + 0.15, m.z);
-      dm.rotation.set(0, m.ry, 0);
-      dm.scale.set(m.w + 0.1, 1.3, m.d + 0.1);
-      dm.updateMatrix();
-      skirt.setMatrixAt(i, dm.matrix);
-    });
-    skirt.instanceMatrix.needsUpdate = true; skirt.frustumCulled = false;
-    scene.add(skirt);
-    // 店招 / 雨棚（默认穿透）
-    for (const m of F) {
-      if (m.enterable) continue;
-      const fx = m.x + m.nx * (m.d / 2), fz = m.z + m.nz * (m.d / 2);
-      if (m.type === 'pub' || m.type === 'pharmacy') {
-        staticB.box(Math.min(m.w, 3.2), 0.12, 0.8, fx + m.nx * 0.4, m.base + 2.6, fz + m.nz * 0.4, m.ry, LC(0x2a2018));
-        if (m.type === 'pub') signsB.box(0.5, 0.6, 0.08, fx + m.nx * 1.1, m.base + 3.4, fz + m.nz * 1.1, m.ry, LC(0xc89848));
-        else { // 药房绿十字
-          signsB.box(0.5, 0.16, 0.06, fx + m.nx * 0.3, m.base + 3.3, fz + m.nz * 0.3, m.ry, LC(0x4a9a5a));
-          signsB.box(0.16, 0.5, 0.06, fx + m.nx * 0.3, m.base + 3.3, fz + m.nz * 0.3, m.ry, LC(0x4a9a5a));
-        }
-      } else if (m.type === 'newspaper') {
-        signsB.box(m.w * 0.8, 0.9, 0.08, fx + m.nx * 0.12, m.base + 2.9, fz + m.nz * 0.12, m.ry, LC(0xc8a050));
-      } else if (m.type === 'theatre' && S() < 0.8) {
-        for (let i = -1; i <= 1; i++) {
-          const tx = m.nz, tz = -m.nx;
-          signsB.box(0.9, 1.3, 0.05, fx + m.nx * 0.08 + tx * i * 1.3, m.base + 1.9, fz + m.nz * 0.08 + tz * i * 1.3, m.ry, LC(0xb8a878));
-        }
-      }
-    }
-    stats.facades = F.length;
-  }
-
-  /* ================= 装配 ================= */
+  /* ================= 合批 mesh 装配 ================= */
   function buildMergedMeshes() {
     if (staticB.count > 0) {
       const mesh = new THREE.Mesh(staticB.geometry(), matStatic);
@@ -1752,21 +2282,74 @@ const City = (() => {
   }
 
   /* ================= build / update ================= */
-  function build(sc, models) {
-    scene = sc;
+  function build(sc, m) {
+    scene = sc; models = m;
     buildMaterials();
-    buildUnitGeos();
+    measureKK();
 
-    // 6 城区：以 POS 中心为核的道路网格 + 街区地块
+    // 6 城区 + 东区扩展 + 公园边：正交道路网格（4 正交向为主）+ 街区地块
+    const SHRINEd = { x: 188, z: -104 };
     const districts = [
-      { c: POS.SPAWN, ang: 0.35, half: 58, types: ['townhouse', 'townhouse', 'townhouse', 'pub', 'pharmacy'] },
-      { c: POS.THEATRE, ang: -0.45, half: 56, types: ['theatre', 'newspaper', 'bank', 'pub', 'townhouse'] },
-      { c: POS.VILLAGE, ang: 0.12, half: 50, types: ['pub', 'newspaper', 'pharmacy', 'townhouse'] },
-      { c: { x: 188, z: -104 }, ang: 0.55, half: 54, types: ['bank', 'bank', 'newspaper', 'townhouse'] },
-      { c: POS.DOCKS, ang: 1.15, half: 40, types: ['warehouse', 'warehouse', 'pub'] },
-      { c: POS.STATION, ang: -0.25, half: 46, types: ['townhouse', 'newspaper', 'warehouse'] },
+      { c: POS.SPAWN, ang: 0, half: 88, types: ['A', 'B', 'C', 'D', 'E'] },
+      { c: POS.THEATRE, ang: Math.PI / 2, half: 82, types: ['F', 'G', 'H', 'B', 'C'] },
+      { c: POS.VILLAGE, ang: 0, half: 80, types: ['C', 'D', 'E', 'A', 'H'] },
+      { c: SHRINEd, ang: Math.PI / 2, half: 84, types: ['F', 'G', 'B', 'A', 'D'] },
+      { c: POS.DOCKS, ang: Math.PI / 2, half: 66, types: ['H', 'G', 'F', 'E'] },
+      { c: POS.STATION, ang: 0, half: 74, types: ['D', 'E', 'C', 'F', 'B'] },
+      // 东区扩展（East End 荒地，raw 地形）+ 公园西缘
+      { c: { x: 300, z: 70 }, ang: 0, half: 62, types: ['G', 'H', 'F', 'E'] },
+      { c: { x: 296, z: 180 }, ang: 0, half: 56, types: ['D', 'E', 'C', 'B'] },
+      { c: { x: -15, z: -60 }, ang: Math.PI / 2, half: 44, types: ['A', 'C', 'D'] },
+      // 西区（肯辛顿方向雾夜荒郊）+ 南区
+      { c: { x: -150, z: 40 }, ang: 0, half: 80, types: ['C', 'D', 'E', 'A'] },
+      { c: { x: -150, z: 180 }, ang: 0, half: 85, types: ['A', 'B', 'C', 'E'] },
+      { c: { x: -260, z: 120 }, ang: 0, half: 70, types: ['D', 'E', 'F', 'H'] },
+      { c: { x: -80, z: -10 }, ang: 0, half: 44, types: ['A', 'C', 'D'] },
+      { c: { x: 180, z: -210 }, ang: Math.PI / 2, half: 55, types: ['G', 'H', 'F'] },
+      { c: { x: 270, z: -200 }, ang: Math.PI / 2, half: 45, types: ['G', 'F', 'E'] },
     ];
     districts.forEach((d, i) => genDistrict(d, i));
+
+    // 走廊小区 ×3：填在相邻城区之间的空白（宽幅建筑带），di 20~22
+    const MID_T = { x: 145, z: 95 };   // SPAWN↔TOWER 走廊
+    const MID_S = { x: 45, z: 205 };   // THEATRE↔STATION 走廊
+    const MID_E = { x: 190, z: 30 };   // VILLAGE↔SHRINE 走廊
+    const mids = [
+      { c: MID_T, ang: 0, half: 50, types: ['A', 'C', 'D', 'E', 'B'] },
+      { c: MID_S, ang: Math.PI / 2, half: 48, types: ['C', 'E', 'F', 'H'] },
+      { c: MID_E, ang: 0, half: 46, types: ['D', 'F', 'G', 'B'] },
+    ];
+    mids.forEach((d, i) => genDistrict(d, 20 + i));
+
+    // 城区间建筑带（每隔 14~18m 一排，主街 10~14m / 支路 5~7m）
+    const belts = [
+      [POS.SPAWN, POS.THEATRE, 12, [14, 4]],
+      [POS.THEATRE, POS.STATION, 11, [14, 4]],
+      [POS.SPAWN, POS.VILLAGE, 13, [14, 4]],
+      [POS.SPAWN, POS.TOWER, 13, [14, 4]],
+      [POS.VILLAGE, SHRINEd, 12, [14, 4]],
+      [SHRINEd, POS.TOWER, 10, [14, 4]],
+      [SHRINEd, POS.DOCKS, 11, [14, 4]],
+      [POS.THEATRE, POS.VILLAGE, 12, [15, 4]],
+      [POS.STATION, POS.VILLAGE, 12, [15, 4]],
+      [MID_T, MID_E, 11, [15, 4]],
+      [MID_S, MID_T, 11, [15, 4]],
+    ];
+    belts.forEach((b, i) => genBelt(b[0], b[1], b[2], 30 + i, b[3]));
+    genRiverbank(60);
+    genParkEdge(61);
+    // 兜底加密：不足 1950 栋时沿加密带补排（排距更密，上限 12 条）
+    const topUps = [
+      [POS.SPAWN, POS.TOWER, 12], [POS.VILLAGE, SHRINEd, 11], [POS.THEATRE, POS.STATION, 10],
+      [MID_T, POS.TOWER, 10], [MID_S, POS.SPAWN, 10], [MID_E, SHRINEd, 10],
+      [POS.SPAWN, MID_S, 9], [MID_E, POS.DOCKS, 10], [POS.THEATRE, MID_T, 10],
+      [POS.THEATRE, { x: -150, z: 180 }, 11], [{ x: -150, z: 40 }, { x: -150, z: 180 }, 10],
+      [{ x: -260, z: 120 }, { x: -150, z: 40 }, 10],
+    ];
+    for (let i = 0; i < topUps.length && F.length < 1950; i++) {
+      const b = topUps[i];
+      genBelt(b[0], b[1], b[2], 70 + i, [9, 3]);
+    }
 
     markEnterablesAndColliders();
     for (const m of F) if (m.enterable) buildEnterable(m);
@@ -1788,6 +2371,8 @@ const City = (() => {
     buildFacadeMeshes();
     buildLamps();
     buildWindows();
+    scatterProps();
+    flushFurn();
     buildLitter();
     buildRoofLife();
     buildRiver();
@@ -1802,12 +2387,12 @@ const City = (() => {
       _d.updateMatrix();
       if (citIM[c.variant]) citIM[c.variant].setMatrixAt(c.vi, _d.matrix);
     }
-    for (let v = 0; v < 4; v++) if (citIM[v]) citIM[v].instanceMatrix.needsUpdate = true;
+    for (let v = 0; v < N_VARIANTS; v++) if (citIM[v]) citIM[v].instanceMatrix.needsUpdate = true;
 
     built = true;
     console.log('[City] stats', JSON.stringify(stats),
       '| 后巷', alleyCount, '| 屋顶路线', routeCount, '| 木板捷径', plankCount,
-      '| 煤气灯', lampSpots.length, '| 真实光源', World.keyLights.length,
+      '| 店招', signCount, '| 煤气灯', lampSpots.length, '| 真实光源', World.keyLights.length,
       '| 马车环线', carriageLoops.length, '| wigginsSpot', JSON.stringify(wigginsSpot));
   }
 
