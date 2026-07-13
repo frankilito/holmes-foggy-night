@@ -618,6 +618,14 @@ const City = (() => {
         n++;
       }
     }
+    // v2.1 穿模修复：全部建筑注册碰撞盒 + 屋顶平台（可进入门厅除外——门洞需通行；
+    // 排屋共享墙交叠由推出算法顺序收敛，可接受）
+    for (const m of F) {
+      if (m.collidable || m.enterable) continue;
+      m.collidable = true;
+      pushBox(m.x, m.z, m.w / 2 - 0.15, m.d / 2 - 0.15, m.ry);
+      pushPlat(m.x, m.z, m.w / 2 - 0.5, m.d / 2 - 0.5, m.base + m.h + 0.1, m.ry);
+    }
     // 屋顶跳跃路线计数：同行连续模块高度差 ≤3m（间距 0 ≤ 4.5m）
     let prev = null;
     for (const m of F) {
@@ -734,15 +742,40 @@ const City = (() => {
   const _imD = new THREE.Object3D();
   const _imM = new THREE.Matrix4();
   // 按模型网格拆分合批；arr: [{x,y,z,ry,s|sx,sy,sz}]
+  // v2.1 穿模修复：户外地面道具全局去重叠 + 全建筑避让（桌上/高处道具不过滤）
+  const placedProps = [];
+  const OUTDOOR_PROP = /^ph2_|^kk_cb_(bench|box|dumpster|trash|watertower|bush)|^kk_r_crate|^kk_r_bowl|^kk_r_jar/;
+  function propMinD(name) {
+    if (/bench|gate|crane|watertower/.test(name)) return 2.2;
+    if (/barrel|crate|box|dumpster/.test(name)) return 1.1;
+    return 0.8;
+  }
   function instModel(name, arr, countProps = true) {
     if (!arr || !arr.length) return;
-    if (countProps) stats.props += arr.length;
+    let list = arr;
+    if (OUTDOOR_PROP.test(name)) {
+      const md = propMinD(name);
+      list = [];
+      for (const a of arr) {
+        // 只过滤落在地面上的道具（y 接近地形）；桌上食品/壁挂件不过滤
+        if (a.y > World.height(a.x, a.z) + 0.5) { list.push(a); continue; }
+        if (hitsAnyBox(a.x, a.z, 0.5)) continue;   // 全建筑碰撞盒（v2.1 已覆盖所有楼房）
+        let clash = false;
+        for (const p of placedProps) {
+          const lim = Math.max(md, p.md) * 0.8;
+          if (Math.abs(p.x - a.x) < lim && Math.abs(p.z - a.z) < lim) { clash = true; break; }
+        }
+        if (!clash) { list.push(a); placedProps.push({ x: a.x, z: a.z, md }); }
+      }
+      if (!list.length) return;
+    }
+    if (countProps) stats.props += list.length;
     const parts = modelParts(name);
     if (!parts) return;
     for (const p of parts) {
-      const im = new THREE.InstancedMesh(p.geo, p.mat, arr.length);
-      for (let i = 0; i < arr.length; i++) {
-        const a = arr[i];
+      const im = new THREE.InstancedMesh(p.geo, p.mat, list.length);
+      for (let i = 0; i < list.length; i++) {
+        const a = list[i];
         const s = a.s != null ? a.s : 1;
         _imD.position.set(a.x, a.y, a.z);
         _imD.rotation.set(0, a.ry || 0, 0);

@@ -101,6 +101,10 @@ const Story = (() => {
       }
       // v2：避开建筑碰撞体（被楼房盖住则沿盒心径向挪出，最多 14 次）
       const boxes = World.boxes || [];
+      const NPCAVOID = [
+        { x: 144, z: 226 }, { x: 154, z: 226 }, { x: 198, z: -110 }, { x: 61, z: 154 },
+        { x: 176, z: -88 }, { x: -72, z: -114 }, { x: 146, z: -44 },
+      ];
       for (let tries = 0; tries < 14; tries++) {
         let hit = null;
         for (const b of boxes) {
@@ -108,6 +112,11 @@ const Story = (() => {
           const dx = x - b.x, dz = z - b.z;
           const lx = dx * c - dz * s, lz = dx * s + dz * c;
           if (Math.abs(lx) < b.hx + 1.2 && Math.abs(lz) < b.hz + 1.2) { hit = b; break; }
+        }
+        if (!hit) { // v2.1 再避开 NPC 对话点（防止 E 键误触对话）
+          for (const n of NPCAVOID) {
+            if (Math.hypot(x - n.x, z - n.z) < 3.5) { hit = { x: n.x, z: n.z }; break; }
+          }
         }
         if (!hit) break;
         let dx = x - hit.x, dz = z - hit.z, l = Math.hypot(dx, dz);

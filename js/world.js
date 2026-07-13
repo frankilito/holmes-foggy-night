@@ -65,11 +65,23 @@ const World = (() => {
   const DISTRICTS = [
     [POS.SPAWN, 13, 48, 96], [POS.VILLAGE, 12, 42, 84], [POS.THEATRE, 12.5, 42, 84],
     [POS.SHRINE, 14, 40, 78], [POS.STATION, 13, 36, 72], [POS.DOCKS, 4.5, 32, 62],
+    // v2.1 扩展城区台地（与 city.js districts/mids 同步，否则城区走廊低于可建线）
+    [{ x: 300, z: 70 }, 10, 34, 74], [{ x: 296, z: 180 }, 10.5, 31, 66], [{ x: -15, z: -60 }, 11, 24, 54],
+    [{ x: -150, z: 40 }, 10, 44, 92], [{ x: -150, z: 180 }, 10.5, 47, 97], [{ x: -260, z: 120 }, 9.5, 38, 80],
+    [{ x: -80, z: -10 }, 11.5, 24, 54], [{ x: 180, z: -210 }, 9, 30, 65], [{ x: 270, z: -200 }, 9, 25, 55],
+    [{ x: 145, z: 95 }, 10, 27, 60], [{ x: 45, z: 205 }, 11, 26, 58], [{ x: 190, z: 30 }, 11, 25, 56],
   ];
   function districtK(x, z) {
     let k = 0;
     for (const [p, , r0, r1] of DISTRICTS) {
       k = Math.max(k, sstep(r1, r0, Math.hypot(x - p.x, z - p.z)));
+    }
+    // v2.1 城区走廊带也按城区铺装（湿石板 splat）
+    for (const [ax, az, bx, bz] of URBAN_BELTS) {
+      const abx = bx - ax, abz = bz - az;
+      const t = clamp01(((x - ax) * abx + (z - az) * abz) / (abx * abx + abz * abz));
+      const dx = x - (ax + abx * t), dz = z - (az + abz * t);
+      k = Math.max(k, sstep(14, 4, Math.sqrt(dx * dx + dz * dz)));
     }
     return k;
   }
@@ -89,6 +101,18 @@ const World = (() => {
     for (const [p, ph, r0, r1] of DISTRICTS) {
       const dd = Math.hypot(x - p.x, z - p.z);
       if (dd < r1) h = mix(ph + fbm(x * 0.05, z * 0.05, 2) * 0.7, h, sstep(r0, r1, dd));
+    }
+
+    // v2.1 城区走廊抬升：建筑带沿线地形抬到 ~8.5m（否则原始地形低于可建线，城市断裂）
+    for (const [ax, az, bx, bz] of URBAN_BELTS) {
+      const abx = bx - ax, abz = bz - az;
+      const t = clamp01(((x - ax) * abx + (z - az) * abz) / (abx * abx + abz * abz));
+      const dx = x - (ax + abx * t), dz = z - (az + abz * t);
+      const d = Math.sqrt(dx * dx + dz * dz);
+      if (d < 18) {
+        const corr = 8.5 + fbm(x * 0.05, z * 0.05, 2) * 0.5;
+        h = mix(corr, h, sstep(6, 18, d));
+      }
     }
 
     // 大本钟：三层可步行阶梯高台（坡度约45°）
@@ -733,11 +757,40 @@ const World = (() => {
     return m;
   }
 
+  // v2.1：city v2 扩展城区 footprint（与 city.js build() 的 districts/mids/belts 同步）——
+  // 这些区域不长野生巨石/枯木/树，避免街中插石
+  const URBAN_ZONES = [
+    [150, 230, 88], [75, 150, 82], [195, 250, 80], [188, -104, 84], [250, -85, 66], [10, 255, 74],
+    [300, 70, 62], [296, 180, 56], [-15, -60, 44], [-150, 40, 80], [-150, 180, 85], [-260, 120, 70],
+    [-80, -10, 44], [180, -210, 55], [270, -200, 45], [145, 95, 50], [45, 205, 48], [190, 30, 46],
+  ];
+  const URBAN_BELTS = [
+    [150, 230, 75, 150], [75, 150, 10, 255], [150, 230, 195, 250], [150, 230, 140, -50],
+    [195, 250, 188, -104], [188, -104, 140, -50], [188, -104, 250, -85], [75, 150, 195, 250],
+    [10, 255, 195, 250], [145, 95, 190, 30], [45, 205, 145, 95], [145, 95, 140, -50],
+    [45, 205, 150, 230], [190, 30, 188, -104], [75, 150, 145, 95], [75, 150, -150, 180],
+    [-150, 40, -150, 180], [-260, 120, -150, 40],
+  ];
+  function inUrban(x, z) {
+    for (const [cx, cz, r] of URBAN_ZONES) {
+      const dx = x - cx, dz = z - cz;
+      if (dx * dx + dz * dz < (r + 12) * (r + 12)) return true;
+    }
+    for (const [ax, az, bx, bz] of URBAN_BELTS) {
+      const abx = bx - ax, abz = bz - az;
+      const t = clamp01(((x - ax) * abx + (z - az) * abz) / (abx * abx + abz * abz));
+      const dx = x - (ax + abx * t), dz = z - (az + abz * t);
+      if (dx * dx + dz * dz < 16 * 16) return true;
+    }
+    return false;
+  }
+
   function okSpot(x, z, { minH = 2, maxH = 34, minNy = 0.82 } = {}) {
     const h = height(x, z);
     if (h < minH || h > maxH) return false;
     if (normal(x, z).y < minNy) return false;
     if (districtK(x, z) > 0.25) return false;                 // 城区不长野树
+    if (inUrban(x, z)) return false;                          // v2.1 扩展城区不长野物
     if (riverDist(x, z) < 34) return false;
     if (Math.hypot(x - POS.VOLCANO.x, z - POS.VOLCANO.z) < 195) return false;
     if (Math.hypot(x - POS.TOWER.x, z - POS.TOWER.z) < 48) return false; // 高台与登顶路径不长树
