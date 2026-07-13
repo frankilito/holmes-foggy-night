@@ -99,29 +99,29 @@ const Story = (() => {
           x += dx / l * 10; z += dz / l * 10;
         }
       }
-      // v2：避开建筑碰撞体（被楼房盖住则沿盒心径向挪出，最多 14 次）
+      // v3：螺旋搜索附近空地（避开建筑 footprint + NPC 对话点 + 落水，最多 ~36m 外沿）
       const boxes = World.boxes || [];
       const NPCAVOID = [
-        { x: 144, z: 226 }, { x: 154, z: 226 }, { x: 198, z: -110 }, { x: 61, z: 154 },
+        { x: 157, z: 230.5 }, { x: 156.5, z: 227.5 }, { x: 198, z: -110 }, { x: 61, z: 154 },
         { x: 176, z: -88 }, { x: -72, z: -114 }, { x: 146, z: -44 },
       ];
-      for (let tries = 0; tries < 14; tries++) {
-        let hit = null;
+      const spotClear = (sx, sz) => {
+        if (World.height(sx, sz) < 2) return false;
         for (const b of boxes) {
           const c = Math.cos(-(b.ry || 0)), s = Math.sin(-(b.ry || 0));
-          const dx = x - b.x, dz = z - b.z;
-          const lx = dx * c - dz * s, lz = dx * s + dz * c;
-          if (Math.abs(lx) < b.hx + 1.2 && Math.abs(lz) < b.hz + 1.2) { hit = b; break; }
+          const dx = sx - b.x, dz = sz - b.z;
+          if (Math.abs(dx * c - dz * s) < b.hx + 1.2 && Math.abs(dx * s + dz * c) < b.hz + 1.2) return false;
         }
-        if (!hit) { // v2.1 再避开 NPC 对话点（防止 E 键误触对话）
-          for (const n of NPCAVOID) {
-            if (Math.hypot(x - n.x, z - n.z) < 3.5) { hit = { x: n.x, z: n.z }; break; }
-          }
+        for (const n of NPCAVOID) if (Math.hypot(sx - n.x, sz - n.z) < 3.5) return false;
+        return true;
+      };
+      if (!spotClear(x, z)) {
+        let found = false;
+        for (let i = 1; i <= 48 && !found; i++) {
+          const a = i * 2.39996, r = 1.2 + i * 0.75;
+          const sx = def.x + Math.cos(a) * r, sz = def.z + Math.sin(a) * r;
+          if (spotClear(sx, sz)) { x = sx; z = sz; found = true; }
         }
-        if (!hit) break;
-        let dx = x - hit.x, dz = z - hit.z, l = Math.hypot(dx, dz);
-        if (l < 0.01) { dx = 1; dz = 0; l = 1; }
-        x += dx / l * 2.5; z += dz / l * 2.5;
       }
       const clue = {
         id: def.id, x, z, y: World.height(x, z), kind: def.kind,

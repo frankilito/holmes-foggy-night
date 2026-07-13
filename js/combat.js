@@ -212,7 +212,15 @@ const Combat = (() => {
   function attachRig(key) {
     const c = meshCache[key];
     if (!c || !c.mesh) return;
-    if (!c.mesh.parent) { const hr = handBone('HandR'); if (hr) hr.add(c.mesh); }
+    if (!c.mesh.parent) {
+      const hr = handBone('HandR');
+      if (hr) {
+        // v3：武器上手时隐藏人物模型自带的手杖（同手共存会穿模）
+        const built = hr.getObjectByName('Cane');
+        if (built) built.visible = (key !== 'sword');
+        hr.add(c.mesh);
+      }
+    }
     if (c.stock && !c.stock.parent) { const hl = handBone('HandL'); if (hl) hl.add(c.stock); }
   }
   function ensureAttached() {

@@ -113,8 +113,8 @@ const Npc = (() => {
     const POS = World.POS;
 
     // 各人位置（spec 五表，一字不差）
-    const watsonP = landPlace(POS.SPAWN.x - 6, POS.SPAWN.z - 4);   // 221B 壁炉旁（室内）
-    const hudsonP = landPlace(POS.SPAWN.x + 4, POS.SPAWN.z - 4);   // 221B 一楼
+    const watsonP = landPlace(POS.SPAWN.x + 7, POS.SPAWN.z + 0.5);   // 221B 壁炉旁（室内，x∈[154,162]）
+    const hudsonP = landPlace(POS.SPAWN.x + 6.5, POS.SPAWN.z - 2.5); // 221B 一楼
     const mycP = landPlace(POS.CLUB.x, POS.CLUB.z + 8);            // 迪奥吉尼斯俱乐部门廊
     const lesP = landPlace(POS.SHRINE.x - 2, POS.SHRINE.z + 10);   // 苏格兰场证物库门口
     const adlP = landPlace(POS.THEATRE.x - 14, POS.THEATRE.z + 4); // 西区剧院侧门
@@ -137,14 +137,17 @@ const Npc = (() => {
     ];
 
     for (const d of DEFS) {
-      const kit = ModelKit.buildNpc(d.kind);
+      const kit = Characters.buildNpcRigged(d.kind);   // v3：Q 版骨骼 NPC（替换 ModelKit）
       const obj = kit.scene;
       const baseY = (d.y !== undefined) ? d.y : H(d.x, d.z) + 0.05;
       obj.position.set(d.x, baseY, d.z);
       // 默认朝向：面向贝克街方向（大街）
       obj.rotation.y = Math.atan2(POS.SPAWN.x - d.x, POS.SPAWN.z - d.z);
-      // 手持道具
-      const J = kit.joints;
+      // 手持道具（骨骼按名查找）
+      const J = {
+        HandR: obj.getObjectByName('HandR'), HandL: obj.getObjectByName('HandL'),
+        Spine1: obj.getObjectByName('Spine1'), Head: obj.getObjectByName('Head'),
+      };
       if (d.id === 'mycroft' && J.HandR) J.HandR.add(Characters.makeUmbrellaClosed());
       if (d.id === 'lestrade') {
         if (J.HandL) J.HandL.add(Characters.makeLanternProp());      // 手提灯（内含 PointLight）

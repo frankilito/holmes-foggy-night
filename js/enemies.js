@@ -1,8 +1,9 @@
 /* enemies.js — 莫里亚蒂犯罪网络：5 种敌人 + BOSS「莱辛巴赫乌鸦」
- * v2：enforcer/assassin/bomber 换 KayKit 骨骼角色（SkeletonUtils.clone + 每 mob 一个 AnimationMixer，41 骨 76 动画）；
- *     rat/hound 保留程序化建模（细节加倍 + 原有 bob 动画）；减员至 16 只（任务组 4 + 城市 8 + 厂区 4）；AI 温和化
+ * v3：enforcer/assassin/bomber 换 Characters.buildPerson(opts) 自制 Q 版骨骼人（胡闹厨房风格，每 mob 一个 AnimationMixer + 材质 clone）；
+ *     rat/hound 程序化建模 Q 版化（圆头豆身大眼，发条钥匙/弹簧/铆钉细节与 bob 动画保留）
+ * v2：减员至 16 只（任务组 4 + 城市 8 + 厂区 4）；AI 温和化
  * mob 形状（契约）：{i, type, pos, ry, hp, maxHp, state, r, obj, alive, weakUntil:0, stagger:0}
- * 模型嵌套：obj(AI 朝向 ry) → inner(程序化动画 bob/呼吸/压扁/颤抖) → fix(模型，KayKit 面朝 +Z 无需轴向修正)
+ * 模型嵌套：obj(AI 朝向 ry) → inner(程序化动画 bob/呼吸/压扁/颤抖) → fix(模型，面朝 +Z 无需轴向修正)
  * 联机：主机权威 AI/伤害，客机只做快照插值与受击表现（见 contract.md §2 Enemies） */
 const Enemies = (() => {
   const LC = h => new THREE.Color(h).convertSRGBToLinear();
@@ -45,10 +46,29 @@ const Enemies = (() => {
     enforcer: { hp: 120, r: 0.9, aggro: 16,   atkR: 2.8, dmg: 2.5, windup: 0.9,  cd: 2.72, spd: 4.2 },
   };
 
-  // v2：三种人形敌人换 KayKit 骨骼角色（G.models 已加载，{scene, animations:76 clips}，面朝 +Z）
-  const KK_MODEL = { enforcer: 'kk_Barbarian', assassin: 'kk_Rogue_Hooded', bomber: 'kk_Mage' };
-  const KK_ATK = { enforcer: '2H_Melee_Attack_Chop', assassin: '1H_Melee_Attack_Stab', bomber: 'Throw' };
-  const KK_HIT = 'Hit_A', KK_DEATH = 'Death_A';
+  // v3：三种人形敌人用 Characters.buildPerson(opts) 自制 Q 版骨骼人（共享骨架/动画，面朝 +Z，脚底 y=0）
+  // 围裙/炸药桶等配件建造后追加到对应骨骼（boneList 按 Characters.BI 索引）；未知 opts 参数会被自动忽略
+  const PERSON_OPTS = {
+    enforcer: { // 莫里亚蒂重装打手：大块头 + 深棕黑大衣 + 平顶帽（围裙/黄铜护臂追加在骨骼上）
+      h: 1.85, bulk: 1.4, moustache: true,
+      skin: 0xd9b48f, hair: 0x241c14,
+      coat: 0x2e2620, coatDark: 0x1f1a15, trousers: 0x252019,
+      shirt: 0x6b5a45, shoe: 0x14100c, hat: 'flat', hatC: 0x2b241c, coatLen: 0.55,
+    },
+    assassin: { // 迷雾刺客：瘦高 + 深灰斗篷 + 围巾遮脸（半透明烟幕照旧）
+      h: 1.7, bulk: 0.85,
+      skin: 0x4a4640, hair: 0x1c1a16,
+      coat: 0x3a3d44, coatDark: 0x26282e, trousers: 0x2b2d33,
+      shoe: 0x17181c, hat: 'flat', hatC: 0x1e2026, scarf: 0x4a4e58,
+      cape: true, capeC: 0x2e3138, coatLen: 0.6,
+    },
+    bomber: { // 炸药客：圆胖 + 棕外套（背炸药桶 + 引信追加在 Spine2 背后）
+      h: 1.65, bulk: 1.3,
+      skin: 0xd9b48f, hair: 0x3a2a1a,
+      coat: 0x5a4632, coatDark: 0x43331f, trousers: 0x3a2e22,
+      shirt: 0x8a745a, vest: 0x6b4a2a, shoe: 0x1a140d, hat: 'flat', hatC: 0x4a3826, coatLen: 0.5,
+    },
+  };
 
   /* ================= 小工具 ================= */
   const _v = new THREE.Vector3();
@@ -79,53 +99,61 @@ const Enemies = (() => {
     return { obj, inner, fix };
   }
 
-  // 发条侦察鼠：黄铜小盒 + 发条钥匙 + 弹簧腿 + 侧齿轮 + 天线 + 铆钉 + 尾簧（v2 细节加倍）
+  // 发条侦察鼠（v3 Q 版：豆形身 + 圆头 + 大眼萌化；发条钥匙/弹簧腿/侧齿轮/铆钉/尾簧保留）
   function buildRat(m) {
     const f = m.fix;
     const brass = mobMat(m, 0x9a7a34), brassD = mobMat(m, 0x6e5620), iron = mobMat(m, 0x3a3f48);
-    const body = new THREE.Mesh(new THREE.BoxGeometry(0.46, 0.32, 0.66), brass);
-    body.position.y = 0.44; body.castShadow = true; f.add(body);
-    const cap = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.17, 0.1, 8), brassD);
-    cap.position.y = 0.65; f.add(cap);
+    // 豆形身体（圆润，前后略长）
+    const body = new THREE.Mesh(new THREE.SphereGeometry(0.3, 10, 8), brass);
+    body.scale.set(1, 0.88, 1.35); body.position.y = 0.42; body.castShadow = true; f.add(body);
     // 背甲铆钉（两排）
     const rivetGeo = new THREE.SphereGeometry(0.025, 5, 4);
-    for (const [rx, rz] of [[-0.15, 0.18], [0.15, 0.18], [-0.15, -0.12], [0.15, -0.12]]) {
+    for (const [rx, rz] of [[-0.13, 0.15], [0.13, 0.15], [-0.13, -0.15], [0.13, -0.15]]) {
       const rivet = new THREE.Mesh(rivetGeo, brassD);
-      rivet.position.set(rx, 0.605, rz); f.add(rivet);
+      rivet.position.set(rx, 0.66, rz); f.add(rivet);
     }
-    const head = new THREE.Mesh(new THREE.BoxGeometry(0.28, 0.24, 0.26), brass);
-    head.position.set(0, 0.5, 0.42); f.add(head);
+    // 圆头（占比加大）+ 头顶盖
+    const head = new THREE.Mesh(new THREE.SphereGeometry(0.22, 10, 8), brass);
+    head.position.set(0, 0.5, 0.4); f.add(head);
+    const cap = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.15, 0.08, 8), brassD);
+    cap.position.set(0, 0.69, 0.4); f.add(cap);
+    // 大圆眼×2（发光豆眼）
     const eyeMat = mobMat(m, 0x140d04, { emissive: new THREE.Color(0xffb347) });
-    const eye = new THREE.Mesh(new THREE.SphereGeometry(0.045, 6, 6), eyeMat);
-    eye.position.set(0, 0.53, 0.56); f.add(eye);
+    for (const sx of [-0.085, 0.085]) {
+      const eye = new THREE.Mesh(new THREE.SphereGeometry(0.06, 8, 8), eyeMat);
+      eye.position.set(sx, 0.54, 0.6); f.add(eye);
+    }
+    // 圆鼻头
+    const nose = new THREE.Mesh(new THREE.SphereGeometry(0.035, 6, 6), brassD);
+    nose.position.set(0, 0.46, 0.62); f.add(nose);
     // 触须（头部两侧细铜丝）
     for (const sx of [-0.1, 0.1]) {
       const whisker = new THREE.Mesh(new THREE.CylinderGeometry(0.006, 0.006, 0.22, 4), brassD);
       whisker.rotation.z = sx > 0 ? -1.1 : 1.1; whisker.rotation.x = 0.5;
-      whisker.position.set(sx + (sx > 0 ? 0.08 : -0.08), 0.48, 0.54); f.add(whisker);
+      whisker.position.set(sx + (sx > 0 ? 0.1 : -0.1), 0.48, 0.56); f.add(whisker);
     }
     // 天线 + 发光珠（头顶）
-    const antenna = new THREE.Mesh(new THREE.CylinderGeometry(0.008, 0.008, 0.26, 4), iron);
-    antenna.position.set(0.08, 0.74, 0.4); antenna.rotation.z = -0.25; f.add(antenna);
+    const antenna = new THREE.Mesh(new THREE.CylinderGeometry(0.008, 0.008, 0.24, 4), iron);
+    antenna.position.set(0.08, 0.78, 0.38); antenna.rotation.z = -0.25; f.add(antenna);
     const beadMat = mobMat(m, 0x2a1a06, { emissive: new THREE.Color(0xffd060) });
     const bead = new THREE.Mesh(new THREE.SphereGeometry(0.025, 6, 6), beadMat);
-    bead.position.set(0.115, 0.87, 0.4); f.add(bead);
+    bead.position.set(0.115, 0.9, 0.38); f.add(bead);
     // 发条钥匙（背部，转动）
     const key = new THREE.Group();
     const stem = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.025, 0.16, 6), iron);
     stem.rotation.x = Math.PI / 2; stem.position.z = -0.06;
     const wing = new THREE.Mesh(new THREE.TorusGeometry(0.09, 0.022, 6, 10), brassD);
     wing.position.z = -0.14;
-    key.add(stem, wing); key.position.set(0, 0.5, -0.34);
+    key.add(stem, wing); key.position.set(0, 0.5, -0.36);
     f.add(key); m.parts.key = key;
     // 尾簧（三段环）
     for (let k = 0; k < 3; k++) {
       const coil = new THREE.Mesh(new THREE.TorusGeometry(0.05, 0.012, 5, 8), iron);
-      coil.position.set(0, 0.42, -0.38 - k * 0.035); f.add(coil);
+      coil.position.set(0, 0.42, -0.4 - k * 0.035); f.add(coil);
     }
     // 侧齿轮（走动时转动）
     m.parts.gears = [];
-    for (const sx of [-0.25, 0.25]) {
+    for (const sx of [-0.28, 0.28]) {
       const gear = new THREE.Group();
       const disk = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.1, 0.03, 8), brassD);
       disk.rotation.z = Math.PI / 2;
@@ -136,128 +164,90 @@ const Enemies = (() => {
         tooth.position.set(0, Math.cos(a) * 0.11, Math.sin(a) * 0.11);
         gear.add(tooth);
       }
-      gear.position.set(sx, 0.4, 0.02);
+      gear.position.set(sx, 0.42, 0.02);
       f.add(gear); m.parts.gears.push(gear);
     }
     // 弹簧腿（髋关节为支点摆动）
     m.parts.legs = [];
-    for (const [sx, sz] of [[-0.16, 0.22], [0.16, 0.22], [-0.16, -0.22], [0.16, -0.22]]) {
+    for (const [sx, sz] of [[-0.15, 0.22], [0.15, 0.22], [-0.15, -0.22], [0.15, -0.22]]) {
       const leg = new THREE.Group();
-      const coil = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 0.32, 5), iron);
-      coil.position.y = -0.16;
-      const foot = new THREE.Mesh(new THREE.BoxGeometry(0.09, 0.04, 0.12), brassD);
-      foot.position.y = -0.3;
+      const coil = new THREE.Mesh(new THREE.CylinderGeometry(0.03, 0.03, 0.3, 5), iron);
+      coil.position.y = -0.15;
+      const foot = new THREE.Mesh(new THREE.SphereGeometry(0.06, 6, 5), brassD);
+      foot.scale.set(1, 0.5, 1.4); foot.position.y = -0.29;
       leg.add(coil, foot); leg.position.set(sx, 0.32, sz);
       f.add(leg); m.parts.legs.push(leg);
     }
   }
 
-  // 炸药客：圆胖身形 + 背负炸药桶 + 引信
-  function buildBomber(m) {
-    const f = m.fix;
-    const coat = mobMat(m, 0x5a4632), coatD = mobMat(m, 0x43331f), skin = mobMat(m, 0xd9b48f);
-    const body = new THREE.Mesh(new THREE.SphereGeometry(0.42, 10, 8), coat);
-    body.scale.set(1, 1.15, 0.92); body.position.y = 0.62; body.castShadow = true; f.add(body);
-    const belt = new THREE.Mesh(new THREE.CylinderGeometry(0.44, 0.44, 0.1, 10), coatD);
-    belt.position.y = 0.5; f.add(belt);
-    const head = new THREE.Mesh(new THREE.SphereGeometry(0.16, 8, 8), skin);
-    head.position.y = 1.12; f.add(head);
-    const band = new THREE.Mesh(new THREE.CylinderGeometry(0.17, 0.17, 0.07, 8), mobMat(m, 0x7a2e22));
-    band.position.y = 1.18; f.add(band);
-    m.parts.legs = [];
-    for (const sx of [-0.14, 0.14]) {
-      const leg = new THREE.Group();
-      const lm = new THREE.Mesh(new THREE.CylinderGeometry(0.07, 0.06, 0.4, 6), coatD);
-      lm.position.y = -0.2;
-      leg.add(lm); leg.position.set(sx, 0.42, 0);
-      f.add(leg); m.parts.legs.push(leg);
-    }
-    // 背负炸药桶
-    const barrelMat = mobMat(m, 0x6b4a2a);
-    const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.24, 0.24, 0.62, 10), barrelMat);
-    barrel.rotation.x = 0.35; barrel.position.set(0, 0.78, -0.38); barrel.castShadow = true; f.add(barrel);
-    const hoopMat = mobMat(m, 0x8a6a2c);
-    for (const hy of [-0.2, 0.2]) {
-      const hoop = new THREE.Mesh(new THREE.TorusGeometry(0.25, 0.02, 6, 12), hoopMat);
-      hoop.rotation.x = 0.35; hoop.position.set(0, 0.78 + hy, -0.38 - hy * 0.35); f.add(hoop);
-    }
-    const dynMat = mobMat(m, 0x9a2a1a);
-    for (let k = 0; k < 3; k++) {
-      const d = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.045, 0.3, 6), dynMat);
-      d.position.set((k - 1) * 0.1, 1.08, -0.48); d.rotation.x = 0.35; f.add(d);
-    }
-    // 引信 + 火头（引信点燃时红闪）
-    const fuseMat = mobMat(m, 0x2a2620, { emissive: new THREE.Color(0xff3300) });
-    const fuse = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.012, 0.34, 4), fuseMat);
-    fuse.position.set(0.14, 1.0, -0.3); fuse.rotation.x = -0.5; f.add(fuse);
-    const tip = new THREE.Mesh(new THREE.SphereGeometry(0.03, 6, 6), fuseMat);
-    tip.position.set(0.14, 1.14, -0.16); f.add(tip);
-    fuseMat.emissive.setRGB(0.12, 0.02, 0.01); // 平时暗红
-    fuseMat.userData.eBase.copy(fuseMat.emissive);
-    m.parts.fuseMat = fuseMat;
-    m.parts.barrelMat = barrelMat;
-  }
-
-  // 装甲猎犬：四足铁皮 + 黄铜肩甲 + 排气管 + 项圈尖刺 + 铆钉 + 利爪（v2 细节加倍）
+  // 装甲猎犬（v3 Q 版：圆头豆身 + 大眼萌化；黄铜肩甲/项圈尖刺/铆钉/排气管/利爪保留）
   function buildHound(m) {
     const f = m.fix;
     const iron = mobMat(m, 0x3a3f48), ironD = mobMat(m, 0x2a2e36), brass = mobMat(m, 0x8a6a2c);
-    const body = new THREE.Mesh(new THREE.BoxGeometry(0.52, 0.38, 1.05), iron);
-    body.position.y = 0.52; body.castShadow = true; f.add(body);
-    const chest = new THREE.Mesh(new THREE.BoxGeometry(0.46, 0.34, 0.4), ironD);
-    chest.position.set(0, 0.56, 0.42); f.add(chest);
-    const head = new THREE.Mesh(new THREE.BoxGeometry(0.3, 0.28, 0.4), iron);
-    head.position.set(0, 0.6, 0.78); f.add(head);
-    const jaw = new THREE.Mesh(new THREE.BoxGeometry(0.26, 0.1, 0.34), ironD);
-    jaw.position.set(0, 0.44, 0.8); f.add(jaw);
+    // 豆形身体
+    const body = new THREE.Mesh(new THREE.SphereGeometry(0.42, 10, 8), iron);
+    body.scale.set(0.85, 0.8, 1.5); body.position.y = 0.52; body.castShadow = true; f.add(body);
+    // 圆头（占比加大）+ 圆吻 + 鼻头
+    const head = new THREE.Mesh(new THREE.SphereGeometry(0.3, 10, 8), iron);
+    head.position.set(0, 0.62, 0.66); f.add(head);
+    const snout = new THREE.Mesh(new THREE.SphereGeometry(0.15, 8, 6), ironD);
+    snout.scale.set(1, 0.75, 1.2); snout.position.set(0, 0.52, 0.9); f.add(snout);
+    const nose = new THREE.Mesh(new THREE.SphereGeometry(0.05, 6, 6), ironD);
+    nose.position.set(0, 0.56, 1.06); f.add(nose);
+    // 垂耳×2（Q 版大耳）
+    for (const sx of [-0.24, 0.24]) {
+      const ear = new THREE.Mesh(new THREE.SphereGeometry(0.1, 6, 6), ironD);
+      ear.scale.set(0.6, 1.5, 0.4); ear.position.set(sx, 0.66, 0.6); f.add(ear);
+    }
     // 额甲（黄铜护额）
-    const brow = new THREE.Mesh(new THREE.BoxGeometry(0.32, 0.06, 0.16), brass);
-    brow.position.set(0, 0.75, 0.8); f.add(brow);
+    const brow = new THREE.Mesh(new THREE.BoxGeometry(0.34, 0.06, 0.14), brass);
+    brow.position.set(0, 0.86, 0.72); f.add(brow);
+    // 大圆眼×2（红光）
     const eyeMat = mobMat(m, 0x1a0805, { emissive: new THREE.Color(0xff4411) });
-    for (const sx of [-0.09, 0.09]) {
-      const eye = new THREE.Mesh(new THREE.SphereGeometry(0.03, 6, 6), eyeMat);
-      eye.position.set(sx, 0.64, 0.98); f.add(eye);
+    for (const sx of [-0.11, 0.11]) {
+      const eye = new THREE.Mesh(new THREE.SphereGeometry(0.06, 8, 8), eyeMat);
+      eye.position.set(sx, 0.7, 0.92); f.add(eye);
     }
     // 项圈尖刺（颈后三枚黄铜锥）
     for (let k = -1; k <= 1; k++) {
       const spike = new THREE.Mesh(new THREE.ConeGeometry(0.035, 0.14, 5), brass);
-      spike.rotation.x = -0.5; spike.position.set(k * 0.12, 0.76, 0.52); f.add(spike);
+      spike.rotation.x = -0.5; spike.position.set(k * 0.13, 0.82, 0.4); f.add(spike);
     }
-    for (const sx of [-0.3, 0.3]) { // 黄铜肩甲（带铆钉）
-      const pauldron = new THREE.Mesh(new THREE.BoxGeometry(0.16, 0.14, 0.42), brass);
-      pauldron.position.set(sx, 0.74, 0.3); f.add(pauldron);
-      for (const pz of [0.16, -0.02]) {
+    for (const sx of [-0.34, 0.34]) { // 黄铜肩甲（带铆钉）
+      const pauldron = new THREE.Mesh(new THREE.BoxGeometry(0.14, 0.12, 0.4), brass);
+      pauldron.position.set(sx, 0.74, 0.28); f.add(pauldron);
+      for (const pz of [0.14, -0.02]) {
         const rivet = new THREE.Mesh(new THREE.SphereGeometry(0.022, 5, 4), ironD);
-        rivet.position.set(sx + (sx > 0 ? 0.09 : -0.09), 0.74, 0.3 + pz); f.add(rivet);
+        rivet.position.set(sx + (sx > 0 ? 0.08 : -0.08), 0.74, 0.28 + pz); f.add(rivet);
       }
     }
     // 体侧铆钉 + 散热口
     const rivetGeo = new THREE.SphereGeometry(0.025, 5, 4);
-    for (const sx of [-0.27, 0.27]) {
+    for (const sx of [-0.34, 0.34]) {
       for (const rz of [-0.3, 0, 0.3]) {
         const rivet = new THREE.Mesh(rivetGeo, brass);
-        rivet.position.set(sx, 0.56, rz); f.add(rivet);
+        rivet.position.set(sx, 0.52, rz); f.add(rivet);
       }
-      const vent = new THREE.Mesh(new THREE.BoxGeometry(0.02, 0.16, 0.22), ironD);
-      vent.position.set(sx, 0.42, -0.15); f.add(vent);
+      const vent = new THREE.Mesh(new THREE.BoxGeometry(0.02, 0.14, 0.2), ironD);
+      vent.position.set(sx, 0.4, -0.16); f.add(vent);
     }
     // 双排气管（背部，黄铜管口）
     for (const sx of [-0.12, 0.12]) {
       const pipe = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.04, 0.34, 7), iron);
-      pipe.rotation.x = -0.6; pipe.position.set(sx, 0.78, -0.4); f.add(pipe);
+      pipe.rotation.x = -0.6; pipe.position.set(sx, 0.84, -0.5); f.add(pipe);
       const rim = new THREE.Mesh(new THREE.TorusGeometry(0.05, 0.012, 5, 8), brass);
-      rim.position.set(sx, 0.88, -0.54); rim.rotation.x = -0.6; f.add(rim);
+      rim.position.set(sx, 0.94, -0.64); rim.rotation.x = -0.6; f.add(rim);
     }
     const tail = new THREE.Mesh(new THREE.ConeGeometry(0.05, 0.34, 5), ironD);
-    tail.rotation.x = -1.1; tail.position.set(0, 0.6, -0.6); f.add(tail);
+    tail.rotation.x = -1.1; tail.position.set(0, 0.62, -0.62); f.add(tail);
     m.parts.legs = [];
-    for (const [sx, sz] of [[-0.18, 0.34], [0.18, 0.34], [-0.18, -0.34], [0.18, -0.34]]) {
+    for (const [sx, sz] of [[-0.2, 0.32], [0.2, 0.32], [-0.2, -0.34], [0.2, -0.34]]) {
       const leg = new THREE.Group();
-      const lm = new THREE.Mesh(new THREE.CylinderGeometry(0.055, 0.045, 0.42, 6), iron);
+      const lm = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.05, 0.42, 6), iron);
       lm.position.y = -0.21;
       leg.add(lm);
       // 利爪（足尖两枚）
-      for (const cx of [-0.035, 0.035]) {
+      for (const cx of [-0.04, 0.04]) {
         const claw = new THREE.Mesh(new THREE.ConeGeometry(0.02, 0.1, 4), brass);
         claw.rotation.x = Math.PI / 2; claw.position.set(cx, -0.4, 0.06);
         leg.add(claw);
@@ -267,28 +257,7 @@ const Enemies = (() => {
     }
   }
 
-  // 迷雾刺客：瘦高灰衣 + 半透明 + 烟幕粒子（v2 起仅作 KayKit 缺失兜底）
-  function buildAssassin(m) {
-    const f = m.fix;
-    const bodyMat = mobMat(m, 0x52555e, { transparent: true, opacity: 0.5 });
-    const darkMat = mobMat(m, 0x33363d, { transparent: true, opacity: 0.5 });
-    const cloak = new THREE.Mesh(new THREE.CylinderGeometry(0.14, 0.3, 1.35, 8, 1, true), bodyMat);
-    cloak.position.y = 0.72; cloak.castShadow = true; f.add(cloak);
-    const torso = new THREE.Mesh(new THREE.CylinderGeometry(0.15, 0.17, 0.6, 8), bodyMat);
-    torso.position.y = 1.05; f.add(torso);
-    const head = new THREE.Mesh(new THREE.SphereGeometry(0.12, 8, 8), darkMat);
-    head.position.y = 1.48; f.add(head);
-    const hat = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.11, 0.22, 8), darkMat);
-    hat.position.y = 1.66; f.add(hat);
-    const brim = new THREE.Mesh(new THREE.CylinderGeometry(0.17, 0.17, 0.02, 10), darkMat);
-    brim.position.y = 1.56; f.add(brim);
-    const dag = new THREE.Mesh(new THREE.BoxGeometry(0.03, 0.03, 0.3), mobMat(m, 0x9aa0aa));
-    dag.position.set(0.22, 0.95, 0.16); dag.rotation.x = 0.6; f.add(dag);
-    m.parts.bodyMat = bodyMat;
-    addAssassinSmoke(m);
-  }
-
-  // 环绕烟幕（KayKit 刺客与兜底共用）
+  // 环绕烟幕（Q 版刺客与回退共用）
   function addAssassinSmoke(m) {
     const N = 14;
     const g = new THREE.BufferGeometry();
@@ -307,27 +276,30 @@ const Enemies = (() => {
     m.fix.add(smoke); m.parts.smoke = smoke;
   }
 
-  /* ================= KayKit 骨骼角色（enforcer/assassin/bomber） ================= */
-  // 状态映射：idle→Idle patrol→Walking_A chase→Running_A attack→KK_ATK[type](once 结束回退)
-  //          受击→Hit_A(once) 死亡→Death_A(once+clamp 倒地后隐藏)；交叉淡入 0.12s
-  function buildKKMob(m) {
-    const src = models && models[KK_MODEL[m.type]];
-    if (!src || !src.scene || !THREE.SkeletonUtils || !THREE.SkeletonUtils.clone) {
-      console.warn('[Enemies] KayKit 模型缺失，回退程序化：', KK_MODEL[m.type]);
-      if (m.type === 'bomber') buildBomber(m);
-      else if (m.type === 'assassin') buildAssassin(m);
-      else buildDummyHumanoid(m);
+  /* ================= Q 版骨骼人（enforcer/assassin/bomber，Characters.buildPerson） ================= */
+  // 状态映射：idle→'idle' patrol→'walk' chase→'run' 攻击→'attack'(once) 受击→'hit'(once)
+  //          死亡→'die'(once+clamp 倒地后隐藏)；交叉淡入 0.12s，once 动作结束自动回退循环动作
+  let personFallbackWarned = false;
+  function buildPersonMob(m) {
+    const C = window.Characters;
+    let person = null;
+    if (C && typeof C.buildPerson === 'function') {
+      try { person = C.buildPerson(PERSON_OPTS[m.type]); } catch (e) { person = null; }
+    }
+    if (!person) {
+      if (!personFallbackWarned) { console.warn('[Enemies] Characters.buildPerson 缺失/异常，回退极简 Q 版人形'); personFallbackWarned = true; }
+      buildPersonFallback(m);
       return;
     }
-    const kk = THREE.SkeletonUtils.clone(src.scene); // SkinnedMesh 必须用 SkeletonUtils 克隆
-    m.fix.add(kk);
-    m.mixer = new THREE.AnimationMixer(kk);
+    m.fix.add(person.scene);
+    m.mixer = new THREE.AnimationMixer(person.scene);
     m.clipMap = {};
-    for (const c of (src.animations || [])) m.clipMap[c.name] = c;
-    kk.traverse(o => {
+    for (const c of (person.animations || [])) m.clipMap[c.name] = c;
+    // 材质必须每 mob clone（personMat() 是共享单例，受击泛白/emissive 会互染）
+    person.scene.traverse(o => {
       if (!o.isMesh || !o.material) return;
       o.castShadow = true;
-      o.material = o.material.clone(); // 独立材质：受击泛白/引信红闪互不染
+      o.material = o.material.clone();
       if (m.type === 'assassin') o.material.transparent = true; // 烟幕半透明（opacity 每帧驱动）
       o.material.userData.eBase = o.material.emissive ? o.material.emissive.clone() : new THREE.Color(0, 0, 0);
       m.mats.push(o.material);
@@ -340,14 +312,15 @@ const Enemies = (() => {
         if (m.curAnimObj && m.state !== 'dead') { m.curAnimObj.reset(); m.curAnimObj.fadeIn(0.12); m.curAnimObj.play(); }
       }
     });
-    m.isKK = true;
+    m.isPerson = true;
     m.busyOnce = null;
-    if (m.type === 'assassin') { m.parts.bodyMats = m.mats.slice(); addAssassinSmoke(m); }
-    if (m.type === 'bomber') m.parts.fuseMats = m.mats.slice(); // Mage 无独立引信 mesh：整体材质 emissive 红闪
-    kkPlay(m, 'Idle');
+    if (m.type === 'enforcer') attachEnforcerGear(m, person);
+    else if (m.type === 'bomber') attachBomberGear(m, person);
+    else if (m.type === 'assassin') { m.parts.bodyMats = m.mats.slice(); addAssassinSmoke(m); }
+    personPlay(m, 'idle');
   }
 
-  function kkPlay(m, name, once, keep) {
+  function personPlay(m, name, once, keep) {
     if (!m.mixer || !m.clipMap[name]) return;
     const a = m.mixer.clipAction(m.clipMap[name]);
     if (once) {
@@ -362,15 +335,99 @@ const Enemies = (() => {
     if (m.curAnimObj && m.curAnimObj !== a) m.curAnimObj.fadeOut(0.12);
     m.curAnim = name; m.curAnimObj = a;
   }
+  // 攻击：v3 characters.js 保证 'attack' clip；缺失则回退 'caneAim' 一次播放
+  function playAttack(m) {
+    if (!m.isPerson) return;
+    if (m.clipMap.attack) personPlay(m, 'attack', true);
+    else if (m.clipMap.caneAim) personPlay(m, 'caneAim', true);
+  }
+  // 受击：v3 characters.js 保证 'hit' clip；缺失则只靠泛白+压扁（flashHit/animateMob 已有）
+  function playHit(m) {
+    if (m.isPerson && m.clipMap.hit) personPlay(m, 'hit', true);
+  }
 
-  // 资产缺失兜底（enforcer 专用）：极简人形，保证逻辑不崩
-  function buildDummyHumanoid(m) {
+  // 重装打手配件：深色围裙挂 Hips 骨 + 黄铜护臂挂 ArmR2/ArmL2（平顶帽由 opts.hat 提供）
+  function attachEnforcerGear(m, person) {
+    const BI = (window.Characters && Characters.BI) || {};
+    const apronMat = mobMat(m, 0x33271b);
+    const apron = new THREE.Group();
+    const bib = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.42, 0.05), apronMat);
+    bib.position.set(0, 0.16, 0.34);
+    const skirt = new THREE.Mesh(new THREE.BoxGeometry(0.6, 0.62, 0.05), apronMat);
+    skirt.position.set(0, -0.32, 0.3);
+    apron.add(bib, skirt);
+    apron.children.forEach(o => { o.castShadow = true; });
+    (person.boneList[BI.Hips] || person.scene).add(apron);
+    const brassMat = mobMat(m, 0xb08d3e);
+    for (const bn of ['ArmR2', 'ArmL2']) {
+      const bone = person.boneList[BI[bn]];
+      if (!bone) continue;
+      const bracer = new THREE.Mesh(new THREE.CylinderGeometry(0.1, 0.09, 0.18, 8), brassMat);
+      bracer.position.y = -0.1; bracer.castShadow = true;
+      bone.add(bracer);
+    }
+  }
+
+  // 炸药客配件：背炸药桶挂 Spine2 骨背后 + 引信（引信点燃时红闪，照旧由 animateMob 驱动）
+  function attachBomberGear(m, person) {
+    const BI = (window.Characters && Characters.BI) || {};
+    const barrelMat = mobMat(m, 0x6b4a2a);
+    const hoopMat = mobMat(m, 0x8a6a2c);
+    const dynMat = mobMat(m, 0x9a2a1a);
+    const pack = new THREE.Group();
+    const barrel = new THREE.Mesh(new THREE.CylinderGeometry(0.22, 0.22, 0.58, 10), barrelMat);
+    barrel.castShadow = true; pack.add(barrel);
+    for (const hy of [-0.18, 0.18]) {
+      const hoop = new THREE.Mesh(new THREE.TorusGeometry(0.23, 0.02, 6, 12), hoopMat);
+      hoop.position.y = hy; pack.add(hoop);
+    }
+    for (let k = 0; k < 3; k++) {
+      const d = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.045, 0.3, 6), dynMat);
+      d.position.set((k - 1) * 0.1, 0.34, 0); pack.add(d);
+    }
+    // 引信 + 火头
+    const fuseMat = mobMat(m, 0x2a2620, { emissive: new THREE.Color(0xff3300) });
+    const fuse = new THREE.Mesh(new THREE.CylinderGeometry(0.012, 0.012, 0.3, 4), fuseMat);
+    fuse.position.set(0.16, 0.24, 0.1); fuse.rotation.x = -0.5; pack.add(fuse);
+    const tip = new THREE.Mesh(new THREE.SphereGeometry(0.03, 6, 6), fuseMat);
+    tip.position.set(0.16, 0.4, 0.22); pack.add(tip);
+    fuseMat.emissive.setRGB(0.12, 0.02, 0.01); // 平时暗红
+    fuseMat.userData.eBase.copy(fuseMat.emissive);
+    pack.position.set(0, 0.05, -0.34); pack.rotation.x = 0.35;
+    (person.boneList[BI.Spine2] || person.scene).add(pack);
+    m.parts.fuseMat = fuseMat;
+    m.parts.barrelMat = barrelMat;
+  }
+
+  // 回退（Characters.buildPerson 缺失/异常）：极简 Q 版人形——球头 + 豆身 + 大眼，bob 动画照旧
+  function buildPersonFallback(m) {
     const f = m.fix;
-    const coat = mobMat(m, 0x4a3a2a);
-    const body = new THREE.Mesh(new THREE.BoxGeometry(0.5, 0.9, 0.35), coat);
-    body.position.y = 0.85; body.castShadow = true; f.add(body);
-    const head = new THREE.Mesh(new THREE.BoxGeometry(0.26, 0.26, 0.26), coat);
-    head.position.y = 1.45; f.add(head);
+    const o = PERSON_OPTS[m.type];
+    const aopts = m.type === 'assassin' ? { transparent: true, opacity: 0.5 } : null;
+    const coat = mobMat(m, o.coat, aopts);
+    const skin = mobMat(m, o.skin, aopts);
+    const hk = o.h / 1.7;
+    const body = new THREE.Mesh(new THREE.SphereGeometry(0.3 * o.bulk, 10, 8), coat);
+    body.scale.set(1, 1.15, 0.85); body.position.y = 0.6 * hk; body.castShadow = true; f.add(body);
+    const head = new THREE.Mesh(new THREE.SphereGeometry(0.21, 10, 8), skin);
+    head.position.y = 1.02 * hk; f.add(head);
+    const eyeMat = mobMat(m, 0x14100c, aopts);
+    for (const sx of [-0.075, 0.075]) {
+      const eye = new THREE.Mesh(new THREE.SphereGeometry(0.04, 6, 6), eyeMat);
+      eye.position.set(sx, head.position.y + 0.02, 0.18); f.add(eye);
+    }
+    const hat = new THREE.Mesh(new THREE.CylinderGeometry(0.2, 0.23, 0.1, 8), mobMat(m, o.hatC || 0x222222, aopts));
+    hat.position.y = head.position.y + 0.2; f.add(hat);
+    m.parts.legs = [];
+    for (const sx of [-0.12, 0.12]) {
+      const leg = new THREE.Group();
+      const lm = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.05, 0.34, 6), coat);
+      lm.position.y = -0.17;
+      leg.add(lm); leg.position.set(sx, 0.36, 0);
+      f.add(leg); m.parts.legs.push(leg);
+    }
+    if (m.type === 'bomber') attachBomberGear(m, { boneList: [], scene: f }); // 回退也背炸药桶（引信红闪照旧）
+    if (m.type === 'assassin') { m.parts.bodyMats = m.mats.slice(); addAssassinSmoke(m); }
   }
 
   // mixer 性能：玩家 90m 内逐帧更新；远处 0.2s 节流派发（动作切换不受影响）
@@ -404,7 +461,7 @@ const Enemies = (() => {
     m.obj = sh.obj; m.inner = sh.inner; m.fix = sh.fix;
     if (type === 'rat') buildRat(m);
     else if (type === 'hound') buildHound(m);
-    else buildKKMob(m); // enforcer/assassin/bomber → KayKit 骨骼角色（资产缺失自动回退程序化）
+    else buildPersonMob(m); // enforcer/assassin/bomber → Characters.buildPerson Q 版骨骼人（缺失自动回退）
     m.obj.position.set(x, y, z);
     m.obj.rotation.y = m.ry;
     scene.add(m.obj);
@@ -425,6 +482,14 @@ const Enemies = (() => {
     }
     if (World.districtK(x, z) <= 0.2) return false; // 城区及外缘
     if (Math.hypot(x, z) > 330) return false;
+    // v3：不在建筑 footprint 内（全建筑已注册碰撞盒）
+    const boxes = World.boxes || [];
+    for (let i = 0; i < boxes.length; i++) {
+      const b = boxes[i];
+      const c = Math.cos(-(b.ry || 0)), s = Math.sin(-(b.ry || 0));
+      const dx = x - b.x, dz = z - b.z;
+      if (Math.abs(dx * c - dz * s) < b.hx + 1.5 && Math.abs(dx * s + dz * c) < b.hz + 1.5) return false;
+    }
     return true;
   }
   function pickType(r) { // hash2 加权：rat 30% bomber 20% hound 25% assassin 15% enforcer 10%
@@ -767,7 +832,7 @@ const Enemies = (() => {
           if (tgt.dist <= cfg.atkR && m.cd <= 0) {
             m.state = 'attack'; m.atkT = cfg.windup;
             if (m.type === 'bomber') m.fusing = true;       // 引信点燃：红闪颤抖
-            if (m.isKK) kkPlay(m, KK_ATK[m.type], true);    // 攻击 clip（once，结束自动回退）
+            playAttack(m);                                  // 攻击 clip（once，结束自动回退）
             break;
           }
           chaseMove(m, tgt, dt);
@@ -822,7 +887,7 @@ const Enemies = (() => {
       if (Net.sendMobDmg) Net.sendMobDmg(m.i, dmg);
       flashHit(m);
       showDmgNum(m, dmg, opts.crit);
-      if (m.isKK) kkPlay(m, KK_HIT, true);
+      playHit(m);
       return dmg;
     }
     if (m.shrine && !m.hostile) activateShrineGroup(); // 打到休眠任务组→全体激活
@@ -830,7 +895,7 @@ const Enemies = (() => {
     flashHit(m);
     showDmgNum(m, dmg, opts.crit);
     sfx('hit');
-    if (m.isKK) kkPlay(m, KK_HIT, true); // v2：受击反馈 = Hit_A + 泛白（flashHit 材质闪）
+    playHit(m); // 受击反馈 = hit clip（缺失则仅泛白+压扁，flashHit/animateMob 已有）
     if (m.hp <= 0) { killMob(m, { source: opts.source }); return dmg; }
     if (m.hostile && (m.state === 'idle' || m.state === 'patrol')) m.state = 'chase';
     return dmg;
@@ -843,7 +908,7 @@ const Enemies = (() => {
     for (const mat of m.mats) if (mat.emissive && mat.userData.eBase) mat.emissive.copy(mat.userData.eBase);
     if (m.type === 'bomber' && !m.detonated) explodeBomber(m, !isClient()); // 被击杀也殉爆
     kills++;
-    if (m.isKK) kkPlay(m, KK_DEATH, true, true); // Death_A（clampWhenFinished，倒地后由 animateMob 隐藏）
+    if (m.isPerson) personPlay(m, 'die', true, true); // die（clampWhenFinished，倒地后由 animateMob 隐藏）
     // mobs 不能从数组移除（联机快照按索引 i 同步）→ 标记 dead + 隐藏 obj
     if (!opts.silent && !isClient()) dropLoot(m);
   }
@@ -878,14 +943,14 @@ const Enemies = (() => {
     m._px = m.pos.x; m._pz = m.pos.z;
     m.obj.position.set(m.pos.x, m.pos.y, m.pos.z);
     m.obj.rotation.y = m.ry;
-    if (m.state === 'dead') { // 程序化模型前倒 0.6s；KayKit 播 Death_A；倒地后隐藏（mobs 保留）
+    if (m.state === 'dead') { // 程序化模型前倒 0.6s；骨骼人播 die；倒地后隐藏（mobs 保留）
       m.deadT += dt;
       const k = Math.min(1, m.deadT / 0.6);
-      if (!m.isKK) {
+      if (!m.isPerson) {
         m.inner.rotation.x = -1.45 * (1 - (1 - k) * (1 - k));
         m.inner.position.y = -0.25 * k;
       }
-      const hideAfter = m.isKK ? 2.0 : 1.2; // KayKit 等 Death_A 倒地后再隐藏
+      const hideAfter = m.isPerson ? 2.0 : 1.2; // 骨骼人等 die 倒地后再隐藏
       if (m.deadT > hideAfter && m.obj.visible) m.obj.visible = false;
       return;
     }
@@ -906,14 +971,9 @@ const Enemies = (() => {
     if (m.fusing) { // 炸药客引信：红闪 + 颤抖（随引信燃烧加剧）
       const f = 1 - Math.max(0, m.atkT) / m.cfg.windup;
       shx = (Math.random() - 0.5) * 0.06 * f; shz = (Math.random() - 0.5) * 0.06 * f;
-      if (m.hitFlash <= 0) { // 受击泛白期间让位
-        if (m.parts.fuseMats) { // KayKit Mage：整体材质 emissive 红闪
-          const on = Math.sin(T * (20 + f * 30)) > 0;
-          for (const mat of m.parts.fuseMats) if (mat.emissive) mat.emissive.setRGB(on ? 0.25 + 0.75 * f : 0.05, 0.03, 0.01);
-        } else { // 程序化兜底：引信 + 药桶红闪
-          if (m.parts.fuseMat) m.parts.fuseMat.emissive.setRGB(Math.sin(T * (20 + f * 30)) > 0 ? 1 : 0.15, 0.05, 0.02);
-          if (m.parts.barrelMat) m.parts.barrelMat.emissive.setRGB(Math.sin(T * (16 + f * 26)) > 0 ? 0.9 * f : 0, 0, 0);
-        }
+      if (m.hitFlash <= 0) { // 受击泛白期间让位：引信 + 药桶红闪
+        if (m.parts.fuseMat) m.parts.fuseMat.emissive.setRGB(Math.sin(T * (20 + f * 30)) > 0 ? 1 : 0.15, 0.05, 0.02);
+        if (m.parts.barrelMat) m.parts.barrelMat.emissive.setRGB(Math.sin(T * (16 + f * 26)) > 0 ? 0.9 * f : 0, 0, 0);
       }
     }
     m.inner.position.set(shx, bobY, shz);
@@ -931,10 +991,10 @@ const Enemies = (() => {
       if (m.parts.bodyMats) for (const mat of m.parts.bodyMats) mat.opacity = op;
       else if (m.parts.bodyMat) m.parts.bodyMat.opacity = op;
     }
-    if (m.isKK && m.state !== 'attack') { // KayKit 状态映射（attack/dead 由事件触发，不在此覆盖）
-      kkPlay(m, m.state === 'chase' ? (m.spd > 0.5 ? 'Running_A' : 'Idle')
-                : m.state === 'patrol' ? (m.spd > 0.5 ? 'Walking_A' : 'Idle')
-                : 'Idle');
+    if (m.isPerson && m.state !== 'attack') { // 状态映射（attack/dead 由事件触发，不在此覆盖）
+      personPlay(m, m.state === 'chase' ? (m.spd > 0.5 ? 'run' : 'idle')
+                : m.state === 'patrol' ? (m.spd > 0.5 ? 'walk' : 'idle')
+                : 'idle');
     }
   }
 
@@ -970,17 +1030,18 @@ const Enemies = (() => {
         if (m.state !== 'dead') killMob(m, { silent: true });
         continue;
       }
-      if (a[4] < prevHp) { flashHit(m); showDmgNum(m, prevHp - a[4], false); if (m.isKK) kkPlay(m, KK_HIT, true); }
+      if (a[4] < prevHp) { flashHit(m); showDmgNum(m, prevHp - a[4], false); playHit(m); }
       m.hp = a[4];
       m.state = ns;
       if (ns !== prevState) {
         if (ns === 'attack') {
           m.atkT = m.cfg.windup;
           if (m.type === 'bomber') m.fusing = true;
-          if (m.isKK) kkPlay(m, KK_ATK[m.type], true);
+          playAttack(m);
         } else if (prevState === 'attack') {
           m.fusing = false;
-          if (m.parts.fuseMats) for (const mat of m.parts.fuseMats) if (mat.emissive && mat.userData.eBase) mat.emissive.copy(mat.userData.eBase);
+          if (m.parts.fuseMat && m.parts.fuseMat.userData.eBase) m.parts.fuseMat.emissive.copy(m.parts.fuseMat.userData.eBase);
+          if (m.parts.barrelMat && m.parts.barrelMat.userData.eBase) m.parts.barrelMat.emissive.copy(m.parts.barrelMat.userData.eBase);
         }
       }
     }

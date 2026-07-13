@@ -86,47 +86,29 @@ const World = (() => {
     return k;
   }
 
-  /* ---------- 地形高度函数（唯一碰撞源） ---------- */
+  /* ---------- 地形高度函数（唯一碰撞源） ----------
+   * v3：全城夷平（用户指示：不要地形差）。基准 8.5m 微起伏，
+   * 仅保留：泰晤士河谷 / 大本钟三层高台 / 海德公园缓丘 / 黑墙铸造厂 / 世界边缘 */
   function height(x, z) {
     const d = Math.hypot(x, z);
-    let h = fbm(x * 0.008 + 10, z * 0.008 + 10, 4) * 16 - 3;
-    h += fbm(x * 0.03, z * 0.03, 2) * 1.6;
-    if (h < 0) h *= 0.3;
+    let h = 8.5 + fbm(x * 0.05, z * 0.05, 2) * 0.35;
 
     // 泰晤士河谷
     const rd = riverDist(x, z);
     h = mix(-5.5, h, sstep(24, 56, rd));
 
-    // 城区台地（缓坡整平，街道可布设）
-    for (const [p, ph, r0, r1] of DISTRICTS) {
-      const dd = Math.hypot(x - p.x, z - p.z);
-      if (dd < r1) h = mix(ph + fbm(x * 0.05, z * 0.05, 2) * 0.7, h, sstep(r0, r1, dd));
-    }
-
-    // v2.1 城区走廊抬升：建筑带沿线地形抬到 ~8.5m（否则原始地形低于可建线，城市断裂）
-    for (const [ax, az, bx, bz] of URBAN_BELTS) {
-      const abx = bx - ax, abz = bz - az;
-      const t = clamp01(((x - ax) * abx + (z - az) * abz) / (abx * abx + abz * abz));
-      const dx = x - (ax + abx * t), dz = z - (az + abz * t);
-      const d = Math.sqrt(dx * dx + dz * dz);
-      if (d < 18) {
-        const corr = 8.5 + fbm(x * 0.05, z * 0.05, 2) * 0.5;
-        h = mix(corr, h, sstep(6, 18, d));
-      }
-    }
-
-    // 大本钟：三层可步行阶梯高台（坡度约45°）
+    // 大本钟：三层可步行阶梯高台（任务地标，保留；坡度约45°）
     const td = Math.hypot(x - POS.TOWER.x, z - POS.TOWER.z);
     if (td < 30) {
       h = mix(h, 10, sstep(30, 20, td));
       h += 3.6 * (sstep(16, 12.8, td) + sstep(11.2, 8.0, td) + sstep(6.4, 3.2, td));
     }
 
-    // 海德公园缓丘
+    // 海德公园缓丘（更缓）
     const fd = Math.hypot(x - POS.FLOWER.x, z - POS.FLOWER.z);
-    if (fd < 100) h = mix(8.5 + fbm(x * 0.02, z * 0.02, 2) * 2.4, h, sstep(52, 100, fd));
+    if (fd < 100) h = mix(8.5 + fbm(x * 0.02, z * 0.02, 2) * 1.2, h, sstep(52, 100, fd));
 
-    // 黑墙铸造厂：渣山环 + 熔铁池坑
+    // 黑墙铸造厂：渣山环 + 熔铁池坑（BOSS 战场，保留）
     const vd = Math.hypot(x - POS.VOLCANO.x, z - POS.VOLCANO.z);
     if (vd < 185) {
       const slope = mix(52, h, sstep(95, 185, vd));

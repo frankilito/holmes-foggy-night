@@ -415,7 +415,7 @@ const City = (() => {
         F.push({ type: letter, x, z, ry: ry + ryJit, w, d, h: BB.h * s, s, base, nx, nz, rowKey, di, bi, bj, side, enterable: false, collidable: false });
         occAdd(x, z, Math.max(w, d), di);
       }
-      cur += w * 0.62; // 共享墙：交叠成排屋（实心墙内交叠不可见）
+      cur += w * 0.78; // v3：排屋近贴减少互插穿模（原 0.62 重叠过深）
     }
   }
 
@@ -1057,6 +1057,7 @@ const City = (() => {
         staticB.box(0.08, 2.1, 0.08, p[0], y + 1.05, p[1], 0, wood);
       }
       staticB.prism(2.7, 0.7, 2.1, st.x, y + 2.1, st.z, ry, colC);
+      pushBox(st.x, st.z, 1.1, 0.55, ry);  // v3：摊位桌面注册碰撞（棚柱/棚顶穿透）
       // 桌上食品 4~5 件 + 碗/罐/篮
       const nf = 5 + ((S() * 2) | 0); // 每摊 5~6 件食品，合计 ≥60
       for (let k = 0; k < nf; k++) {
