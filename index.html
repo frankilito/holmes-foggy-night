@@ -1,0 +1,180 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>福尔摩斯：雾都雨夜谜案</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><text y='26' font-size='26'>🔍</text></svg>">
+<link rel="stylesheet" href="css/style.css?v=8">
+</head>
+<body>
+<div id="game-container"></div>
+
+<!-- ============ 加载页 ============ -->
+<div id="loading">
+  <div class="load-inner">
+    <div class="gaslamp"><i></i><span></span></div>
+    <h1>福尔摩斯<span>雾都雨夜谜案</span></h1>
+    <div class="load-bar"><div id="load-fill"></div></div>
+    <div id="load-text">正在点亮煤气灯……</div>
+  </div>
+</div>
+
+<!-- ============ 标题 ============ -->
+<div id="title-screen" class="hidden">
+  <div class="title-inner">
+    <div class="masthead">THE STRAND MAGAZINE · 伦敦 · 189□年 雨夜特刊</div>
+    <div class="game-title">福尔摩斯<em>雾都雨夜谜案</em></div>
+    <div class="subtitle">自 由 攀 爬 · 演 绎 推 理 · 屋 顶 追 逐</div>
+    <button id="btn-start">单 人 办 案</button>
+    <div class="mp-row">
+      <button id="btn-host">创建双人案件</button>
+      <input id="mp-code" maxlength="4" placeholder="案件码" autocomplete="off">
+      <button id="btn-join">加入案件</button>
+    </div>
+    <div id="mp-status"></div>
+    <div class="title-controls">
+      WASD 移动 · Shift 奔跑 · 空格 跳跃/二段跳/滑翔 · 鼠标 视角 · 左键 攻击 · 右键 撑伞格挡<br>
+      1/2/3/4 切换武器 · F 演绎视界 · E 调查/对话 · C 翻滚 · M 静音 · H 帮助
+    </div>
+    <div class="pd-note">基于公共领域文学角色的独立再创作，与任何现代影视改编无隶属或背书关系</div>
+  </div>
+</div>
+
+<!-- ============ HUD ============ -->
+<div id="status-panel" class="hidden">
+  <div id="hearts"></div>
+  <div id="stamina-wrap">
+    <svg width="58" height="58" viewBox="0 0 58 58">
+      <circle cx="29" cy="29" r="24" fill="none" stroke="rgba(255,255,255,.15)" stroke-width="5"/>
+      <circle id="stamina-ring" cx="29" cy="29" r="24" fill="none" stroke="#a8c46a" stroke-width="5"
+        stroke-linecap="round" stroke-dasharray="150.8" stroke-dashoffset="0"
+        transform="rotate(-90 29 29)"/>
+    </svg>
+  </div>
+  <div id="coin-panel"><span class="coin-icon">£</span><span id="coin-count">0</span></div>
+</div>
+
+<div id="right-panel" class="hidden">
+  <canvas id="minimap" width="176" height="176"></canvas>
+  <div id="quest-panel">
+    <div class="quest-title">当前任务</div>
+    <div id="quest-text">——</div>
+  </div>
+  <div id="case-panel">
+    <div class="case-title">案件墙 · 221B <span id="case-count"></span></div>
+    <div id="case-list"></div>
+    <div id="case-deduction"></div>
+  </div>
+</div>
+
+<div id="weapon-bar" class="hidden"></div>
+
+<div id="boss-bar" class="hidden">
+  <div class="boss-name">莱辛巴赫乌鸦 <span id="boss-phase"></span><span id="boss-weak"></span></div>
+  <div class="boss-hp-outer"><div id="boss-hp-fill"></div></div>
+</div>
+
+<div id="interact-prompt" class="hidden"></div>
+<div id="center-toast" class="hidden"></div>
+
+<!-- 演绎视界：注释线容器 -->
+<div id="deduce-notes"></div>
+
+<!-- 麻醉镖枪动态准星 -->
+<div id="crosshair" class="hidden">
+  <div class="ch-ring"></div><div class="ch-dot"></div>
+  <div class="ch-tick t"></div><div class="ch-tick b"></div>
+  <div class="ch-tick l"></div><div class="ch-tick r"></div>
+</div>
+
+<div id="help-panel" class="hidden">
+  <h3>办案手册</h3>
+  WASD 移动 · Shift 奔跑（耗体力）· 空格 跳跃 / 空中再按=手杖勾檐二段跳 / 按住=丝翼滑翔<br>
+  贴墙按 W 攀爬砖墙·脚手架·排水管（湿墙更耗体力）· C 肩部翻滚闪避<br>
+  左键 攻击 / 按住精确瞄准镖枪 · 右键 撑开雨伞格挡（完美格挡弹开雨幕）<br>
+  1/2/3/4 切换武器 · F 演绎视界（高亮线索·时间减缓）· E 调查 / 对话<br>
+  TTT 连按=排除不可能（5倍速）· M 静音 · H 关闭本面板
+</div>
+
+<div id="deduce-overlay"></div>
+<canvas id="rain-overlay" style="position:fixed;inset:0;z-index:41;pointer-events:none"></canvas>
+
+<!-- ============ 对话 / 过场 ============ -->
+<div id="dialog-box" class="hidden">
+  <div class="dialog-speaker"></div>
+  <div class="dialog-text"></div>
+  <div class="dialog-next">E ▶</div>
+</div>
+<div class="cine-bar" id="cine-top"></div>
+<div class="cine-bar" id="cine-bottom"></div>
+<div id="boss-title"></div>
+
+<div id="damage-vignette"></div>
+<div id="flash-white"></div>
+
+<!-- ============ 死亡 / 结局 ============ -->
+<div id="death-screen" class="hidden">
+  <h1>案 情 急 转</h1>
+  <p>雨夜吞没了侦探的身影……</p>
+  <button id="btn-respawn">从检查点继续</button>
+</div>
+
+<div id="end-screen" class="hidden">
+  <div class="end-inner">
+    <h1>午 夜 钟 声 · 案 件 告 破</h1>
+    <div id="end-stats"></div>
+    <div class="credits">
+      <div>夏洛克·福尔摩斯 与 约翰·华生医生 —— 柯南·道尔 原著（公共领域）</div>
+      <div>模型 · 动画 · 音乐 · 音效 全部原创合成，未使用任何现代影视改编素材</div>
+      <div class="pd-small">基于公共领域文学角色的独立再创作，与任何现代影视改编无隶属或背书关系</div>
+      <div class="thanks">谢 谢 游 玩</div>
+    </div>
+    <button id="btn-restart">再 办 一 案</button>
+  </div>
+</div>
+
+<!-- ============ 报错叠加层（QA 用） ============ -->
+<div id="error-overlay" style="position:fixed;left:0;bottom:0;max-width:60vw;max-height:40vh;overflow:auto;
+  z-index:9999;background:rgba(120,0,0,.85);color:#fff;font:12px/1.5 monospace;padding:8px;display:none;
+  white-space:pre-wrap;pointer-events:none"></div>
+<script>
+(function(){
+  var el = document.getElementById('error-overlay'), n = 0;
+  function show(msg){
+    n++; el.style.display = 'block';
+    el.textContent = '【JS错误 ' + n + '】' + msg + '\n\n' + el.textContent.slice(0, 4000);
+  }
+  window.addEventListener('error', function(e){
+    show((e.message || 'error') + (e.filename ? '\n' + e.filename + ':' + e.lineno + ':' + e.colno : '') +
+      (e.error && e.error.stack ? '\n' + e.error.stack : ''));
+  });
+  window.addEventListener('unhandledrejection', function(e){
+    show('Promise: ' + (e.reason && (e.reason.stack || e.reason.message) || e.reason));
+  });
+})();
+</script>
+
+<!-- ============ 引擎 / 库（旧版全局 API，script 直引） ============ -->
+<script src="js/three.min.js?v=8"></script>
+<script src="js/GLTFLoader.js?v=8"></script>
+<script src="js/DRACOLoader.js?v=8"></script>
+<script src="js/SkeletonUtils.js?v=8"></script>
+<script src="js/peerjs.min.js?v=8"></script>
+
+<!-- ============ 游戏模块（每次改动 bump ?v= 防缓存） ============ -->
+<script src="js/characters.js?v=8"></script>
+<script src="js/models.js?v=8"></script>
+<script src="js/audio.js?v=8"></script>
+<script src="js/ui.js?v=8"></script>
+<script src="js/world.js?v=8"></script>
+<script src="js/city.js?v=8"></script>
+<script src="js/player.js?v=8"></script>
+<script src="js/combat.js?v=8"></script>
+<script src="js/enemies.js?v=8"></script>
+<script src="js/npc.js?v=8"></script>
+<script src="js/story.js?v=8"></script>
+<script src="js/net.js?v=8"></script>
+<script src="js/main.js?v=8"></script>
+</body>
+</html>
